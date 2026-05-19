@@ -1,0 +1,12 @@
+{
+  "name": "cmdbaa",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:zip": "mkdir -p dist && zip -j dist/cmdbaa-custompage.zip src/CmdbBaa.js",
+    "check": "node --check src/CmdbBaa.js && node --check scripts/dev-proxy-server.mjs && node --check scripts/enrich-vsdx.mjs",
+    "vsdx:enrich": "node scripts/enrich-vsdx.mjs 1.vsdx 1.enriched.vsdx",
+    "proxy:dev": "PROXY_PORT=8094 node scripts/dev-proxy-server.mjs"
+  }
+}
