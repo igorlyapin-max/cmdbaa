@@ -5,87 +5,153 @@ import { execFileSync } from 'node:child_process';
 
 const fieldsByKind = {
   object: [
-    textField('BAA_TypeKey', 'BAA type key', ''),
-    textField('BAA_ObjectType', 'BAA object type', ''),
-    textField('BAA_ObjectId', 'Existing CMDB object id', ''),
-    fixedListField('BAA_Action', 'Action', 'create', ['create', 'update', 'skip']),
-    fixedListField('BAA_MatchStatus', 'Match status', 'not_checked', ['not_checked', 'matched', 'not_found', 'ambiguous', 'error']),
-    textField('BAA_InstanceKey', 'Instance key', ''),
-    textField('CMDB_Class', 'CMDB class', ''),
-    textField('CMDB_Name', 'Name', ''),
-    fixedListField('CMDB_Location', 'Location', 'MSK', ['', 'MSK', 'SPB', 'NOC']),
-    fixedListField('CMDB_LocationFixed', 'Location fixed list', 'MSK', ['', 'MSK', 'SPB', 'NOC']),
-    variableListField('CMDB_LocationVariable', 'Location variable list', 'MSK', ['', 'MSK', 'SPB', 'NOC'])
+    textField('_baa_TypeKey', 'BAA type key', ''),
+    textField('_baa_ObjectType', 'BAA object type', ''),
+    textField('_baa_ObjectId', 'Existing CMDB object id', ''),
+    fixedListField('_baa_Action', 'Action', 'create', ['create', 'update', 'skip']),
+    fixedListField('_baa_MatchStatus', 'Match status', 'not_checked', ['not_checked', 'matched', 'not_found', 'ambiguous', 'error']),
+    textField('_baa_InstanceKey', 'Instance key', ''),
+    textField('_baa_VisualObjectId', 'BAA visual object id', ''),
+    textField('_baa_AnchorShapeId', 'BAA anchor shape id', ''),
+    textField('_baa_AggregationKind', 'BAA aggregation kind', ''),
+    fixedListField('_baa_Decomposed', 'BAA decomposed aggregate', 'false', ['true', 'false']),
+    textField('_baa_RoleKey', 'BAA role key', ''),
+    textField('_baa_MappingKey', 'BAA mapping key', ''),
+    textField('_baa_CmdbEntitySlot', 'BAA CMDB entity slot', ''),
+    textField('template_Class', 'CMDB class', ''),
+    textField('template_Name', 'Name', ''),
+    fixedListField('template_Location', 'Location', 'MSK', ['', 'MSK', 'SPB', 'NOC']),
+    fixedListField('template_LocationFixed', 'Location fixed list', 'MSK', ['', 'MSK', 'SPB', 'NOC']),
+    variableListField('template_LocationVariable', 'Location variable list', 'MSK', ['', 'MSK', 'SPB', 'NOC'])
   ],
   connector: [
-    textField('BAA_TypeKey', 'BAA type key', ''),
-    textField('BAA_ObjectType', 'BAA object type', 'Relation'),
-    fixedListField('BAA_Action', 'Action', 'create', ['create', 'update', 'skip']),
-    fixedListField('BAA_MatchStatus', 'Match status', 'not_checked', ['not_checked', 'matched', 'not_found', 'ambiguous', 'error']),
-    textField('BAA_InstanceKey', 'Instance key', ''),
-    textField('BAA_SourceShapeId', 'Source Visio shape id', ''),
-    textField('BAA_SourceKind', 'Source shape kind', ''),
-    textField('BAA_DestinationShapeId', 'Destination Visio shape id', ''),
-    textField('BAA_DestinationKind', 'Destination shape kind', ''),
-    fixedListField('BAA_RelationBindingStatus', 'Relation binding status', 'unbound', ['bound', 'unbound', 'partial', 'invalid_endpoint']),
-    textField('BAA_ValidationIssue', 'BAA validation issue', ''),
-    textField('CMDB_RelationType', 'Relation type', ''),
-    textField('CMDB_FromObject', 'From object', ''),
-    textField('CMDB_ToObject', 'To object', '')
+    textField('_baa_TypeKey', 'BAA type key', ''),
+    textField('_baa_ObjectType', 'BAA object type', 'Relation'),
+    fixedListField('_baa_Action', 'Action', 'create', ['create', 'update', 'skip']),
+    fixedListField('_baa_MatchStatus', 'Match status', 'not_checked', ['not_checked', 'matched', 'not_found', 'ambiguous', 'error']),
+    textField('_baa_InstanceKey', 'Instance key', ''),
+    textField('_baa_VisualObjectId', 'BAA visual object id', ''),
+    textField('_baa_AnchorShapeId', 'BAA anchor shape id', ''),
+    textField('_baa_AggregationKind', 'BAA aggregation kind', ''),
+    fixedListField('_baa_Decomposed', 'BAA decomposed aggregate', 'true', ['true', 'false']),
+    textField('_baa_RoleKey', 'BAA role key', ''),
+    textField('_baa_MappingKey', 'BAA mapping key', ''),
+    textField('_baa_CmdbEntitySlot', 'BAA CMDB entity slot', ''),
+    textField('_baa_SourceShapeId', 'Source Visio shape id', ''),
+    textField('_baa_SourceKind', 'Source shape kind', ''),
+    textField('_baa_SourceText', 'Source user text', ''),
+    textField('_baa_SourceObjectType', 'Source object type', ''),
+    textField('_baa_DestinationShapeId', 'Destination Visio shape id', ''),
+    textField('_baa_DestinationKind', 'Destination shape kind', ''),
+    textField('_baa_DestinationText', 'Destination user text', ''),
+    textField('_baa_DestinationObjectType', 'Destination object type', ''),
+    fixedListField('_baa_RelationBindingStatus', 'Relation binding status', 'unbound', ['bound', 'unbound', 'partial', 'invalid_endpoint']),
+    textField('_baa_ValidationIssue', 'BAA validation issue', ''),
+    textField('template_Class', 'CMDB class', '')
   ],
   container: [
-    textField('BAA_TypeKey', 'BAA type key', ''),
-    textField('BAA_ObjectType', 'BAA object type', 'Container'),
-    textField('BAA_ObjectId', 'Existing CMDB object id', ''),
-    fixedListField('BAA_Action', 'Action', 'create', ['create', 'update', 'skip']),
-    fixedListField('BAA_MatchStatus', 'Match status', 'not_checked', ['not_checked', 'matched', 'not_found', 'ambiguous', 'error']),
-    textField('BAA_InstanceKey', 'Instance key', ''),
-    textField('CMDB_Class', 'CMDB class', ''),
-    textField('CMDB_Name', 'Name', ''),
-    fixedListField('CMDB_Location', 'Location', 'MSK', ['', 'MSK', 'SPB', 'NOC']),
-    fixedListField('CMDB_LocationFixed', 'Location fixed list', 'MSK', ['', 'MSK', 'SPB', 'NOC']),
-    variableListField('CMDB_LocationVariable', 'Location variable list', 'MSK', ['', 'MSK', 'SPB', 'NOC'])
+    textField('_baa_TypeKey', 'BAA type key', ''),
+    textField('_baa_ObjectType', 'BAA object type', 'Container'),
+    textField('_baa_ObjectId', 'Existing CMDB object id', ''),
+    fixedListField('_baa_Action', 'Action', 'create', ['create', 'update', 'skip']),
+    fixedListField('_baa_MatchStatus', 'Match status', 'not_checked', ['not_checked', 'matched', 'not_found', 'ambiguous', 'error']),
+    textField('_baa_InstanceKey', 'Instance key', ''),
+    textField('_baa_VisualObjectId', 'BAA visual object id', ''),
+    textField('_baa_AnchorShapeId', 'BAA anchor shape id', ''),
+    textField('_baa_AggregationKind', 'BAA aggregation kind', ''),
+    fixedListField('_baa_Decomposed', 'BAA decomposed aggregate', 'false', ['true', 'false']),
+    textField('_baa_RoleKey', 'BAA role key', ''),
+    textField('_baa_MappingKey', 'BAA mapping key', ''),
+    textField('_baa_CmdbEntitySlot', 'BAA CMDB entity slot', ''),
+    textField('template_Class', 'CMDB class', ''),
+    textField('template_Name', 'Name', ''),
+    fixedListField('template_Location', 'Location', 'MSK', ['', 'MSK', 'SPB', 'NOC']),
+    fixedListField('template_LocationFixed', 'Location fixed list', 'MSK', ['', 'MSK', 'SPB', 'NOC']),
+    variableListField('template_LocationVariable', 'Location variable list', 'MSK', ['', 'MSK', 'SPB', 'NOC'])
   ],
   group: [
-    textField('BAA_TypeKey', 'BAA type key', ''),
-    textField('BAA_ObjectType', 'BAA object type', 'Visual group'),
-    textField('BAA_EligibleForCmdb', 'BAA eligible for CMDB', 'false'),
-    textField('BAA_ValidationIssue', 'BAA validation issue', 'group_not_cmdb_object')
+    textField('_baa_TypeKey', 'BAA type key', ''),
+    textField('_baa_ObjectType', 'BAA object type', 'Visual group'),
+    textField('_baa_VisualObjectId', 'BAA visual object id', ''),
+    textField('_baa_AnchorShapeId', 'BAA anchor shape id', ''),
+    textField('_baa_AggregationKind', 'BAA aggregation kind', ''),
+    fixedListField('_baa_Decomposed', 'BAA decomposed aggregate', 'false', ['true', 'false']),
+    textField('_baa_RoleKey', 'BAA role key', ''),
+    textField('_baa_MappingKey', 'BAA mapping key', ''),
+    textField('_baa_CmdbEntitySlot', 'BAA CMDB entity slot', ''),
+    textField('_baa_EligibleForCmdb', 'BAA eligible for CMDB', 'false'),
+    textField('_baa_ValidationIssue', 'BAA validation issue', 'group_not_cmdb_object'),
+    textField('template_Class', 'CMDB class', '')
   ]
 };
+
+const EMPTY_USER_VALUE_LABEL = '[пустое значение]';
 
 const visualContextFields = {
   group: fieldsByKind.group,
   container: [
-    textField('BAA_TypeKey', 'BAA type key', ''),
-    textField('BAA_ObjectType', 'BAA object type', 'Visual container'),
-    textField('BAA_EligibleForCmdb', 'BAA eligible for CMDB', 'false'),
-    textField('BAA_ValidationIssue', 'BAA validation issue', 'container_not_enabled_by_contract')
+    textField('_baa_TypeKey', 'BAA type key', ''),
+    textField('_baa_ObjectType', 'BAA object type', 'Visual container'),
+    textField('_baa_EligibleForCmdb', 'BAA eligible for CMDB', 'false'),
+    textField('_baa_ValidationIssue', 'BAA validation issue', 'container_not_enabled_by_contract')
   ]
 };
 
 function textField(name, label, value) {
-  return { name, label, value, type: '0', format: '' };
+  return shapeDataField(name, label, value, '0', '');
 }
 
 function fixedListField(name, label, value, values) {
-  return { name, label, value, type: '1', format: values.join(';') };
+  return shapeDataField(name, label, value, '1', values.join(';'));
 }
 
 function variableListField(name, label, value, values) {
-  return { name, label, value, type: '4', format: values.join(';') };
+  return shapeDataField(name, label, value, '4', values.join(';'));
+}
+
+function visibleShapeDataLabel(name, label) {
+  const rowName = String(name || '');
+  if (rowName.startsWith('_baa_')) return rowName;
+  if (rowName.startsWith('template_')) {
+    const text = String(label || '').trim();
+    return text && text !== rowName ? `${rowName} / ${text}` : rowName;
+  }
+  return label;
+}
+
+function shapeDataField(name, label, value, type, format) {
+  const rowName = String(name || '');
+  return {
+    name: rowName,
+    label: visibleShapeDataLabel(rowName, label),
+    value,
+    type,
+    format,
+    invisible: rowName.startsWith('_baa_')
+  };
+}
+
+function safeShapeDataRowName(value, fallback = 'Rule') {
+  const raw = String(value || fallback);
+  const normalized = raw
+    .replace(/[^A-Za-z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .slice(0, 120);
+  if (/^_baa_/i.test(raw)) return normalized.startsWith('_') ? normalized || fallback : `_${normalized}`.slice(0, 120);
+  return normalized.replace(/^_+/, '').slice(0, 120) || fallback;
 }
 
 function contractMetadataFields(options = {}) {
   const version = options.contractVersion || {};
   if (!version.id || !version.code || !version.rulesChecksum) return [];
   return [
-    textField('BAA_TemplatePrepared', 'BAA template prepared', 'true'),
-    textField('BAA_ContractVersionId', 'BAA contract version id', version.id),
-    textField('BAA_ContractVersionCode', 'BAA contract version code', version.code),
-    textField('BAA_ContractVersionChecksum', 'BAA contract version checksum', version.rulesChecksum),
-    textField('BAA_PreparedAt', 'BAA prepared at', options.preparedAt || ''),
-    textField('BAA_PreparedBy', 'BAA prepared by', options.preparedBy || '')
+    textField('_baa_TemplatePrepared', 'BAA template prepared', 'true'),
+    textField('_baa_ContractVersionId', 'BAA contract version id', version.id),
+    textField('_baa_ContractVersionCode', 'BAA contract version code', version.code),
+    textField('_baa_ContractVersionChecksum', 'BAA contract version checksum', version.rulesChecksum),
+    textField('_baa_ContractObject', 'BAA contract object', 'true'),
+    textField('_baa_PreparedAt', 'BAA prepared at', options.preparedAt || ''),
+    textField('_baa_PreparedBy', 'BAA prepared by', options.preparedBy || '')
   ];
 }
 
@@ -110,13 +176,66 @@ function attrValue(openTag, name) {
 }
 
 function directShapeText(inner) {
+  return directShapeTextInfo(inner).value;
+}
+
+function firstNestedShapeText(inner) {
+  let cursor = 0;
+  while (cursor < inner.length) {
+    const start = inner.indexOf('<Text>', cursor);
+    if (start === -1) return '';
+    const end = inner.indexOf('</Text>', start);
+    if (end === -1) return '';
+    const value = decodeXmlText(inner.slice(start + '<Text>'.length, end)).replace(/\s+/g, ' ').trim();
+    if (value) return value;
+    cursor = end + '</Text>'.length;
+  }
+  return '';
+}
+
+function directShapeTextInfo(inner) {
   const nestedShapes = inner.indexOf('<Shapes>');
   const searchArea = nestedShapes === -1 ? inner : inner.slice(0, nestedShapes);
   const textStart = searchArea.indexOf('<Text>');
-  if (textStart === -1) return '';
+  if (textStart === -1) {
+    return {
+      exists: false,
+      value: ''
+    };
+  }
   const textEnd = searchArea.indexOf('</Text>', textStart);
-  if (textEnd === -1) return '';
-  return decodeXmlText(searchArea.slice(textStart + '<Text>'.length, textEnd)).replace(/\s+/g, ' ').trim();
+  if (textEnd === -1) {
+    return {
+      exists: false,
+      value: ''
+    };
+  }
+  return {
+    exists: true,
+    value: decodeXmlText(searchArea.slice(textStart + '<Text>'.length, textEnd)).replace(/\s+/g, ' ').trim()
+  };
+}
+
+function userValueSource(pageName, shapeId, textInfo, valueName = 'Text') {
+  if (!textInfo || !textInfo.exists) return null;
+  return {
+    name: valueName,
+    path: `visio/pages/${pageName} / Shape[@ID='${shapeId}'] / Text`,
+    value: textInfo.value
+  };
+}
+
+function aggregationContextFor(type, pageName, shapeId, textInfo) {
+  return {
+    kind: type.kind,
+    shapeId,
+    page: pageName,
+    label: type.textExists ? type.text || EMPTY_USER_VALUE_LABEL : type.label,
+    text: type.text || '',
+    textExists: Boolean(type.textExists),
+    typeKey: type.typeKey,
+    userValueSource: userValueSource(pageName, shapeId, textInfo)
+  };
 }
 
 function decodeXmlText(value) {
@@ -157,8 +276,8 @@ function connectorBindingForShape(openTag, options = {}) {
   const destination = binding.destinationShapeId || '';
   const sourceShape = source ? shapeIndex[source] : null;
   const destinationShape = destination ? shapeIndex[destination] : null;
-  const sourceInvalid = Boolean(source && (!sourceShape || !sourceShape.eligibleForCmdb));
-  const destinationInvalid = Boolean(destination && (!destinationShape || !destinationShape.eligibleForCmdb));
+  const sourceInvalid = Boolean(source && !sourceShape);
+  const destinationInvalid = Boolean(destination && !destinationShape);
   let status = 'bound';
   let issue = '';
   if (!source && !destination) {
@@ -176,8 +295,12 @@ function connectorBindingForShape(openTag, options = {}) {
   return {
     sourceShapeId: source,
     sourceKind: sourceShape && sourceShape.kind || '',
+    sourceText: sourceShape && (sourceShape.text || sourceShape.label) || '',
+    sourceObjectType: sourceShape && sourceShape.label || '',
     destinationShapeId: destination,
     destinationKind: destinationShape && destinationShape.kind || '',
+    destinationText: destinationShape && (destinationShape.text || destinationShape.label) || '',
+    destinationObjectType: destinationShape && destinationShape.label || '',
     status,
     issue
   };
@@ -195,8 +318,9 @@ function childCompositionSignature(inner, masterById = {}, rules = {}, depth = 0
     const block = inner.slice(start, end);
     const openEnd = block.indexOf('>');
     const openTag = openEnd === -1 ? block : block.slice(0, openEnd + 1);
-    const shapeInner = block.slice(openEnd + 1, -'</Shape>'.length);
-    const visibleText = directShapeText(shapeInner);
+    const shapeInner = /\/>$/.test(openTag) ? '' : block.slice(openEnd + 1, -'</Shape>'.length);
+    const textInfo = directShapeTextInfo(shapeInner);
+    const visibleText = textInfo.value;
     if (shapeKind(openTag) === 'object' && !attrValue(openTag, 'Master') && !attrValue(openTag, 'NameU')) {
       cursor = end;
       continue;
@@ -204,6 +328,7 @@ function childCompositionSignature(inner, masterById = {}, rules = {}, depth = 0
     if (!(rules.keepDecorativeShapesUnchanged && attrValue(openTag, 'MasterShape') && !visibleText)) {
       const type = displayShapeType(openTag, masterById, visibleText, {
         rules,
+        textExists: textInfo.exists,
         inner: shapeInner,
         compositionDepth: depth + 1
       });
@@ -223,7 +348,9 @@ function displayShapeType(openTag, masterById = {}, visibleText = '', options = 
   const kind = master.isConnector ? 'connector' : isContainer ? 'container' : rawKind;
   const objectName = shapeObjectName(openTag, masterById, kind);
   const shapeName = attrValue(openTag, 'Name') || '';
-  const name = rules.useVisibleTextAsTypeFactor && (kind !== 'group' || rules.groupNameDifferentiatesType) ? visibleText || '' : '';
+  const textExists = Object.prototype.hasOwnProperty.call(options, 'textExists') ? Boolean(options.textExists) : Boolean(visibleText);
+  const userTypeName = textExists ? visibleText || EMPTY_USER_VALUE_LABEL : '';
+  const name = rules.useVisibleTextAsTypeFactor && (kind !== 'group' || rules.groupNameDifferentiatesType) ? userTypeName : '';
   const parts = [
     kind,
     `master:${masterId || objectName}`,
@@ -242,6 +369,7 @@ function displayShapeType(openTag, masterById = {}, visibleText = '', options = 
     shapeName: name,
     visioName: shapeName,
     text: visibleText,
+    textExists,
     isContainer,
     eligibleForCmdb: kind === 'container' ? rules.treatContainersAsTypes : kind !== 'group',
     visualRole: kind === 'group' ? 'group' : kind === 'container' && !rules.treatContainersAsTypes ? 'container' : '',
@@ -258,27 +386,82 @@ function fieldsForShape(openTag, options = {}) {
     pageShapeKey && options.classByPageShapeId && options.classByPageShapeId[pageShapeKey] ||
     options.classByTypeKey && options.classByTypeKey[type.typeKey] ||
     '';
+  const metadata = pageShapeKey && options.metadataByPageShapeId && options.metadataByPageShapeId[pageShapeKey] || {};
   const binding = type.kind === 'connector' ? connectorBindingForShape(openTag, options) : null;
   const baseFields = type.eligibleForCmdb ? fieldsByKind[type.kind] : visualContextFields[type.kind] || fieldsByKind[type.kind];
   const shapeFields = baseFields.map((field) => {
-    if (field.name === 'BAA_TypeKey') return { ...field, value: type.typeKey };
-    if (field.name === 'BAA_ObjectType') return { ...field, value: field.value || type.label };
-    if (field.name === 'CMDB_Class') return { ...field, value: cmdbClass };
-    if (binding && field.name === 'BAA_SourceShapeId') return { ...field, value: binding.sourceShapeId };
-    if (binding && field.name === 'BAA_SourceKind') return { ...field, value: binding.sourceKind };
-    if (binding && field.name === 'BAA_DestinationShapeId') return { ...field, value: binding.destinationShapeId };
-    if (binding && field.name === 'BAA_DestinationKind') return { ...field, value: binding.destinationKind };
-    if (binding && field.name === 'BAA_RelationBindingStatus') return { ...field, value: binding.status };
-    if (binding && field.name === 'BAA_ValidationIssue') return { ...field, value: binding.issue };
-    if (binding && field.name === 'CMDB_FromObject') return { ...field, value: binding.sourceShapeId };
-    if (binding && field.name === 'CMDB_ToObject') return { ...field, value: binding.destinationShapeId };
+    if (field.name === '_baa_TypeKey') return { ...field, value: type.typeKey };
+    if (field.name === '_baa_ObjectType') return { ...field, value: field.value || type.label };
+    if (field.name === '_baa_VisualObjectId') return { ...field, value: metadata.visualObjectId || '' };
+    if (field.name === '_baa_AnchorShapeId') return { ...field, value: metadata.anchorShapeId || '' };
+    if (field.name === '_baa_AggregationKind') return { ...field, value: metadata.aggregationKind || '' };
+    if (field.name === '_baa_Decomposed') return { ...field, value: metadata.decomposed || field.value || '' };
+    if (field.name === '_baa_RoleKey') return { ...field, value: metadata.roleKey || '' };
+    if (field.name === '_baa_MappingKey') return { ...field, value: metadata.mappingKey || '' };
+    if (field.name === '_baa_CmdbEntitySlot') return { ...field, value: metadata.cmdbEntitySlot || '' };
+    if (field.name === 'template_Class') return { ...field, value: cmdbClass };
+    if (binding && field.name === '_baa_SourceShapeId') return { ...field, value: binding.sourceShapeId };
+    if (binding && field.name === '_baa_SourceKind') return { ...field, value: binding.sourceKind };
+    if (binding && field.name === '_baa_SourceText') return { ...field, value: binding.sourceText };
+    if (binding && field.name === '_baa_SourceObjectType') return { ...field, value: binding.sourceObjectType };
+    if (binding && field.name === '_baa_DestinationShapeId') return { ...field, value: binding.destinationShapeId };
+    if (binding && field.name === '_baa_DestinationKind') return { ...field, value: binding.destinationKind };
+    if (binding && field.name === '_baa_DestinationText') return { ...field, value: binding.destinationText };
+    if (binding && field.name === '_baa_DestinationObjectType') return { ...field, value: binding.destinationObjectType };
+    if (binding && field.name === '_baa_RelationBindingStatus') return { ...field, value: binding.status };
+    if (binding && field.name === '_baa_ValidationIssue') return { ...field, value: binding.issue };
     return field;
   });
-  return shapeFields.concat(contractMetadataFields(options));
+  const contractFields = !options.contractPageShapeKey || options.contractPageShapeKey === pageShapeKey
+    ? contractMetadataFields(options)
+    : [];
+  return shapeFields.concat(cmdbAttributeFields(metadata), contractFields);
+}
+
+function cmdbAttributeFields(metadata = {}) {
+  const fields = Array.isArray(metadata.cmdbAttributeFields) ? metadata.cmdbAttributeFields : [];
+  const result = [];
+  for (const field of fields) {
+    const values = Array.isArray(field.listValues) ? field.listValues : [];
+    const label = field.label || [field.className, field.attrName].filter(Boolean).join(' / ') || 'CMDB attribute';
+    const sourceRule = field.sourceRule || {
+      targetClass: field.className || '',
+      targetAttribute: field.attrName || '',
+      sourceRole: 'self',
+      sourceAttribute: field.attrName || '',
+      mode: 'copy'
+    };
+    const sourceRole = String(sourceRule.sourceRole || 'self');
+    const mode = String(sourceRule.mode || 'copy');
+    const ruleRowName = safeShapeDataRowName(`_baa_AttributeRule_${field.className || ''}_${field.attrName || field.rowName || ''}`, '_baa_AttributeRule');
+    result.push(textField(ruleRowName, ruleRowName, JSON.stringify({
+      targetClass: sourceRule.targetClass || field.className || '',
+      targetAttribute: sourceRule.targetAttribute || field.attrName || '',
+      sourceRole,
+      sourceAttribute: sourceRule.sourceAttribute || field.attrName || '',
+      mode,
+      constantValue: sourceRule.constantValue || '',
+      defaultValue: sourceRule.defaultValue || '',
+      overrideAttribute: sourceRule.overrideAttribute || '',
+      rowName: field.rowName || 'template_Attribute'
+    })));
+    if (sourceRole === 'source' || sourceRole === 'destination' || mode === 'constant') continue;
+    if (field.listMode === 'fixed' && values.length) {
+      result.push(fixedListField(field.rowName || 'template_Attribute', label, '', [''].concat(values)));
+      continue;
+    }
+    if (field.listMode === 'variable' && values.length) {
+      result.push(variableListField(field.rowName || 'template_Attribute', label, '', [''].concat(values)));
+      continue;
+    }
+    result.push(textField(field.rowName || 'template_Attribute', label, ''));
+  }
+  return result;
 }
 
 function rowXml(field) {
-  return `<Row N='${xmlAttr(field.name)}'><Cell N='Value' V='${xmlAttr(field.value)}' U='STR'/><Cell N='Prompt' V='' U='STR'/><Cell N='Label' V='${xmlAttr(field.label)}' U='STR'/><Cell N='Format' V='${xmlAttr(field.format)}' U='STR'/><Cell N='SortKey' V='' U='STR'/><Cell N='Type' V='${xmlAttr(field.type)}'/><Cell N='Invisible' V='0'/><Cell N='Verify' V='0'/><Cell N='DataLinked' V='0'/><Cell N='LangID' V='ru-RU' U='STR'/><Cell N='Calendar' V='0'/></Row>`;
+  const invisibleCell = field.invisible ? "<Cell N='Invisible' V='1' F='TRUE'/>" : "<Cell N='Invisible' V='0'/>";
+  return `<Row N='${xmlAttr(field.name)}'><Cell N='Value' V='${xmlAttr(field.value)}' U='STR'/><Cell N='Prompt' V='' U='STR'/><Cell N='Label' V='${xmlAttr(field.label)}' U='STR'/><Cell N='Format' V='${xmlAttr(field.format)}' U='STR'/><Cell N='SortKey' V='' U='STR'/><Cell N='Type' V='${xmlAttr(field.type)}'/>${invisibleCell}<Cell N='Verify' V='0'/><Cell N='DataLinked' V='0'/><Cell N='LangID' V='ru-RU' U='STR'/><Cell N='Calendar' V='0'/></Row>`;
 }
 
 function propertySectionXml(fields) {
@@ -290,7 +473,13 @@ function escapeRegExp(value) {
 }
 
 function mergePropertySection(existing, fields) {
-  let result = existing;
+  let result = existing
+    .replace(/<Row\s+N=(['"])_?baa_[\s\S]*?<\/Row>/gi, '')
+    .replace(/<Row\s+N=(['"])BAA_[\s\S]*?<\/Row>/g, '')
+    .replace(/<Row\s+N=(['"])CMDB_[\s\S]*?<\/Row>/g, '')
+    .replace(/<Row\s+N=(['"])template_RelationType\1[\s\S]*?<\/Row>/g, '')
+    .replace(/<Row\s+N=(['"])template_FromObject\1[\s\S]*?<\/Row>/g, '')
+    .replace(/<Row\s+N=(['"])template_ToObject\1[\s\S]*?<\/Row>/g, '');
   for (const field of fields) {
     const rowPattern = new RegExp(`<Row\\s+N=['"]${escapeRegExp(field.name)}['"][\\s\\S]*?</Row>`);
     if (rowPattern.test(result)) {
@@ -347,10 +536,16 @@ function findShapeEnd(xml, start) {
     const nextClose = xml.indexOf('</Shape>', cursor);
     if (nextClose === -1) return -1;
     if (nextOpen !== -1 && nextOpen < nextClose) {
+      const tagEnd = xml.indexOf('>', nextOpen);
+      if (tagEnd === -1) return -1;
+      const openTag = xml.slice(nextOpen, tagEnd + 1);
+      if (/\/>$/.test(openTag)) {
+        if (depth === 0) return tagEnd + 1;
+        cursor = tagEnd + 1;
+        continue;
+      }
       depth += 1;
-      cursor = xml.indexOf('>', nextOpen);
-      if (cursor === -1) return -1;
-      cursor += 1;
+      cursor = tagEnd + 1;
       continue;
     }
     depth -= 1;
@@ -370,7 +565,7 @@ function forEachShape(xml, fn) {
     const block = xml.slice(start, end);
     const openEnd = block.indexOf('>');
     const openTag = openEnd === -1 ? block : block.slice(0, openEnd + 1);
-    const inner = block.slice(openEnd + 1, -'</Shape>'.length);
+    const inner = /\/>$/.test(openTag) ? '' : block.slice(openEnd + 1, -'</Shape>'.length);
     fn({ block, openTag, inner, start, end });
     cursor = end;
   }
@@ -405,20 +600,25 @@ function collectShapeIndex(xml, masterById, context = {}) {
     const block = xml.slice(start, end);
     const openEnd = block.indexOf('>');
     const openTag = openEnd === -1 ? block : block.slice(0, openEnd + 1);
-    const inner = block.slice(openEnd + 1, -'</Shape>'.length);
+    const inner = /\/>$/.test(openTag) ? '' : block.slice(openEnd + 1, -'</Shape>'.length);
     const shapeId = attrValue(openTag, 'ID');
-    const visibleText = directShapeText(inner);
+    const textInfo = directShapeTextInfo(inner);
+    const visibleText = textInfo.value;
     if (shapeId) {
       const type = displayShapeType(openTag, masterById, visibleText, {
         ...context,
+        textExists: textInfo.exists,
         inner
       });
       result[shapeId] = {
         shapeId,
         kind: type.kind,
         label: type.label,
+        text: visibleText || firstNestedShapeText(inner),
+        textExists: textInfo.exists,
         typeKey: type.typeKey,
-        eligibleForCmdb: type.eligibleForCmdb
+        eligibleForCmdb: type.eligibleForCmdb,
+        userValueSource: userValueSource(context.pageName || '', shapeId, textInfo)
       };
     }
     Object.assign(result, collectShapeIndex(inner, masterById, context));
@@ -427,11 +627,15 @@ function collectShapeIndex(xml, masterById, context = {}) {
   return result;
 }
 
+function isUninformativeAtom(atom) {
+  return !atom.text && !atom.masterId && (!atom.shapeNameU || atom.shapeNameU === 'object');
+}
+
 function atomRoleKey(atom, index) {
   return [
-    `label:${atom.label || ''}`,
+    `label:${isUninformativeAtom(atom) ? `part-${index + 1}` : atom.label || ''}`,
     `kind:${atom.kind || ''}`,
-    `master:${atom.masterId || atom.shapeNameU || ''}`,
+    `master:${atom.masterId || atom.masterShapeId || atom.shapeNameU || ''}`,
     `index:${index}`
   ].join('|');
 }
@@ -440,43 +644,133 @@ function collectAtomicShapes(xml, masterById, pageName, context = {}) {
   const atoms = [];
   const rules = typeDetectionRules(context);
   forEachShape(xml, ({ block, openTag, inner }) => {
-    const visibleText = directShapeText(inner);
+    const textInfo = directShapeTextInfo(inner);
+    const visibleText = textInfo.value;
     const type = displayShapeType(openTag, masterById, visibleText, {
       ...context,
       rules,
+      textExists: textInfo.exists,
       inner
     });
     if (type.kind === 'group' || type.kind === 'container') {
-      atoms.push(...collectAtomicShapes(inner, masterById, pageName, context));
+      const shapeId = attrValue(openTag, 'ID') || '';
+      const aggregationPath = (context.aggregationPath || []).concat([aggregationContextFor(type, pageName, shapeId, textInfo)]);
+      atoms.push(...collectAtomicShapes(inner, masterById, pageName, {
+        ...context,
+        aggregationPath
+      }));
       return;
     }
     if (type.kind === 'connector') return;
     const shapeId = attrValue(openTag, 'ID') || '';
-    const label = visibleText || type.shapeName || type.masterName || type.shapeNameU || shapeId;
-    if (!label) return;
+    const aggregationPath = context.aggregationPath || [];
+    const masterShapeId = attrValue(openTag, 'MasterShape') || '';
+    const rawLabel = textInfo.exists ? visibleText || EMPTY_USER_VALUE_LABEL : type.shapeName || type.masterName || type.shapeNameU || shapeId;
+    const label = rawLabel && rawLabel !== 'object' ? rawLabel : '';
+    if (!rawLabel && !shapeId) return;
     atoms.push({
       page: pageName,
       shapeId,
       label,
+      rawLabel,
       text: visibleText,
+      textExists: textInfo.exists,
+      userValueSource: userValueSource(pageName, shapeId, textInfo),
       kind: type.kind,
       masterId: type.masterId,
+      masterShapeId,
       masterName: type.masterName,
       masterNameU: type.masterNameU,
       shapeNameU: type.shapeNameU,
       typeKey: type.typeKey,
+      aggregationPath,
+      lastAggregation: aggregationPath[aggregationPath.length - 1] || null,
       shapeData: directPropertyRows(block.slice(openTag.length, -'</Shape>'.length))
     });
   });
   return atoms.map((atom, index) => ({
     ...atom,
+    label: atom.label || `Часть ${index + 1}`,
+    anonymous: !atom.label,
     roleKey: atomRoleKey(atom, index)
   }));
 }
 
-function aggregateLabelFor(atoms, fallback) {
-  const labels = atoms.map((atom) => atom.label).filter(Boolean);
-  return labels.length ? labels.join(' / ') : fallback;
+function connectorAtom(openTag, inner, masterById, pageName, context = {}) {
+  const aggregationPath = context.aggregationPath || [];
+  const textInfo = directShapeTextInfo(inner);
+  const visibleText = textInfo.value;
+  const type = displayShapeType(openTag, masterById, visibleText, {
+    ...context,
+    textExists: textInfo.exists,
+    inner
+  });
+  const shapeId = attrValue(openTag, 'ID') || '';
+  const label = textInfo.exists ? visibleText || EMPTY_USER_VALUE_LABEL : type.label || `Соединение ${shapeId}`;
+  const atom = {
+    page: pageName,
+    shapeId,
+    label,
+    rawLabel: label,
+    text: visibleText,
+    textExists: textInfo.exists,
+    userValueSource: userValueSource(pageName, shapeId, textInfo),
+    kind: 'connector',
+    masterId: type.masterId,
+    masterShapeId: attrValue(openTag, 'MasterShape') || '',
+    masterName: type.masterName,
+    masterNameU: type.masterNameU,
+    shapeNameU: type.shapeNameU,
+    typeKey: type.typeKey,
+    shapeData: directPropertyRows(inner),
+    connection: connectorBindingForShape(openTag, context),
+    aggregationPath,
+    lastAggregation: aggregationPath[aggregationPath.length - 1] || null
+  };
+  return {
+    ...atom,
+    roleKey: atomRoleKey(atom, 0)
+  };
+}
+
+function selfAtomForShape(openTag, inner, type, textInfo, pageName, context = {}) {
+  const shapeId = attrValue(openTag, 'ID') || '';
+  const aggregationPath = context.aggregationPath || [];
+  const atom = {
+    page: pageName,
+    shapeId,
+    label: textInfo.exists ? textInfo.value || EMPTY_USER_VALUE_LABEL : type.label || shapeId,
+    rawLabel: textInfo.exists ? textInfo.value || EMPTY_USER_VALUE_LABEL : type.label || shapeId,
+    text: textInfo.value,
+    textExists: textInfo.exists,
+    userValueSource: userValueSource(pageName, shapeId, textInfo),
+    kind: type.kind,
+    masterId: type.masterId,
+    masterShapeId: attrValue(openTag, 'MasterShape') || '',
+    masterName: type.masterName,
+    masterNameU: type.masterNameU,
+    shapeNameU: type.shapeNameU,
+    typeKey: type.typeKey,
+    shapeData: directPropertyRows(inner),
+    aggregationPath,
+    lastAggregation: aggregationPath[aggregationPath.length - 1] || null
+  };
+  return {
+    ...atom,
+    anonymous: false,
+    roleKey: atomRoleKey(atom, 0)
+  };
+}
+
+function aggregateLabelFor(atoms, fallback, aggregateType = {}) {
+  if (aggregateType.textExists) return `${fallback || EMPTY_USER_VALUE_LABEL}: ${atoms.length} частей`;
+  const labels = atoms.filter((atom) => !atom.anonymous).sort((a, b) => {
+    const aEmpty = a.userValueSource && a.userValueSource.path && !a.userValueSource.value;
+    const bEmpty = b.userValueSource && b.userValueSource.path && !b.userValueSource.value;
+    return Number(aEmpty) - Number(bEmpty);
+  }).map((atom) => atom.label).filter(Boolean);
+  if (labels.length) return labels.join(' / ');
+  return `${fallback || 'Агрегат'}: ${atoms.length} частей`;
 }
 
 function aggregateTypeKeyFor(kind, typeKey, atoms) {
@@ -493,6 +787,7 @@ function addAggregate(result, aggregate, instance) {
     kind: aggregate.kind,
     label: aggregate.label,
     typeKey: aggregate.typeKey,
+    userValueSource: aggregate.userValueSource || null,
     atomRoles: aggregate.atomRoles,
     instances: []
   };
@@ -500,47 +795,125 @@ function addAggregate(result, aggregate, instance) {
   result.set(aggregate.aggregateTypeKey, existing);
 }
 
+function anchorAtomForAggregate(atoms) {
+  const list = atoms || [];
+  return list.find((atom) => atom.userValueSource && atom.userValueSource.path && atom.userValueSource.value) ||
+    list.find((atom) => atom.userValueSource && atom.userValueSource.path) ||
+    list.find((atom) => atom.shapeData && atom.shapeData.length) ||
+    list.find((atom) => atom.shapeId) ||
+    null;
+}
+
+function anchorSnapshot(atom, visualObject = {}) {
+  if (!atom) return null;
+  return {
+    page: atom.page || '',
+    shapeId: atom.shapeId || '',
+    roleKey: atom.roleKey || '',
+    label: atom.label || '',
+    kind: atom.kind || '',
+    typeKey: atom.typeKey || '',
+    userValueSource: atom.userValueSource || null,
+    shapeData: atom.shapeData || [],
+    visualObject
+  };
+}
+
 function inspectAggregatesInXml(xml, masterById, pageName, result, context = {}) {
   const rules = typeDetectionRules(context);
   forEachShape(xml, ({ openTag, inner }) => {
-    const visibleText = directShapeText(inner);
+    const textInfo = directShapeTextInfo(inner);
+    const visibleText = textInfo.value;
     const type = displayShapeType(openTag, masterById, visibleText, {
       ...context,
       rules,
+      textExists: textInfo.exists,
       inner
     });
     const shapeId = attrValue(openTag, 'ID') || '';
+    const aggregateUserValueSource = userValueSource(pageName, shapeId, textInfo);
     if (type.kind === 'group' || type.kind === 'container') {
-      const atoms = collectAtomicShapes(inner, masterById, pageName, context);
+      const aggregationPath = (context.aggregationPath || []).concat([aggregationContextFor(type, pageName, shapeId, textInfo)]);
+      const atoms = collectAtomicShapes(inner, masterById, pageName, {
+        ...context,
+        aggregationPath
+      });
+      if (!atoms.length && textInfo.exists) atoms.push(selfAtomForShape(openTag, inner, type, textInfo, pageName, context));
       if (atoms.length) {
+        const visualAnchor = selfAtomForShape(openTag, inner, type, textInfo, pageName, context);
+        const anchor = anchorSnapshot(visualAnchor || anchorAtomForAggregate(atoms), {
+          page: pageName,
+          shapeId,
+          kind: type.kind,
+          label: type.label,
+          userValueSource: aggregateUserValueSource
+        });
         const aggregateTypeKey = aggregateTypeKeyFor(type.kind, type.typeKey, atoms);
         addAggregate(result, {
           aggregateTypeKey,
           kind: type.kind,
-          label: aggregateLabelFor(atoms, type.label),
+          label: aggregateLabelFor(atoms, type.label, type),
           typeKey: type.typeKey,
+          userValueSource: aggregateUserValueSource,
           atomRoles: atoms.map((atom) => ({
             roleKey: atom.roleKey,
             label: atom.label,
             kind: atom.kind,
             typeKey: atom.typeKey,
             masterId: atom.masterId,
+            masterShapeId: atom.masterShapeId,
+            anonymous: atom.anonymous,
+            userValueSource: atom.userValueSource,
+            lastAggregation: atom.lastAggregation,
             shapeNameU: atom.shapeNameU
           }))
         }, {
           page: pageName,
           aggregateShapeId: shapeId,
           label: type.label,
+          userValueSource: aggregateUserValueSource,
+          anchor,
           atoms
         });
       }
       inspectAggregatesInXml(inner, masterById, pageName, result, {
         ...context,
-        insideAggregate: true
+        insideAggregate: true,
+        aggregationPath
       });
       return;
     }
-    if (context.insideAggregate || type.kind === 'connector') return;
+    if (type.kind === 'connector') {
+      const atom = connectorAtom(openTag, inner, masterById, pageName, context);
+      const aggregateTypeKey = aggregateTypeKeyFor('connector', atom.typeKey, [atom]);
+      addAggregate(result, {
+        aggregateTypeKey,
+        kind: 'connector',
+        label: atom.label,
+        typeKey: atom.typeKey,
+        userValueSource: atom.userValueSource,
+        atomRoles: [{
+          roleKey: atom.roleKey,
+          label: atom.label,
+          kind: atom.kind,
+          typeKey: atom.typeKey,
+          masterId: atom.masterId,
+          masterShapeId: atom.masterShapeId,
+          anonymous: false,
+          userValueSource: atom.userValueSource,
+          lastAggregation: atom.lastAggregation,
+          shapeNameU: atom.shapeNameU
+        }]
+      }, {
+        page: pageName,
+        aggregateShapeId: shapeId,
+        label: atom.label,
+        userValueSource: atom.userValueSource,
+        atoms: [atom]
+      });
+      return;
+    }
+    if (context.insideAggregate) return;
     const atoms = collectAtomicShapes(`${openTag}${inner}</Shape>`, masterById, pageName, context);
     if (!atoms.length) return;
     const aggregateTypeKey = aggregateTypeKeyFor('single', atoms[0].typeKey, atoms);
@@ -549,18 +922,24 @@ function inspectAggregatesInXml(xml, masterById, pageName, result, context = {})
       kind: 'single',
       label: atoms[0].label,
       typeKey: atoms[0].typeKey,
+      userValueSource: atoms[0].userValueSource,
       atomRoles: atoms.map((atom) => ({
         roleKey: atom.roleKey,
         label: atom.label,
         kind: atom.kind,
         typeKey: atom.typeKey,
         masterId: atom.masterId,
+        masterShapeId: atom.masterShapeId,
+        anonymous: atom.anonymous,
+        userValueSource: atom.userValueSource,
+        lastAggregation: atom.lastAggregation,
         shapeNameU: atom.shapeNameU
       }))
     }, {
       page: pageName,
       aggregateShapeId: shapeId,
       label: atoms[0].label,
+      userValueSource: atoms[0].userValueSource,
       atoms
     });
   });
@@ -613,10 +992,13 @@ function enrichShapeBlock(block, options = {}) {
   const openEnd = block.indexOf('>');
   if (openEnd === -1) return block;
   const openTag = block.slice(0, openEnd + 1);
+  if (/\/>$/.test(openTag)) return block;
   const inner = block.slice(openEnd + 1, -'</Shape>'.length);
+  const textInfo = directShapeTextInfo(inner);
   const fields = fieldsForShape(openTag, {
     ...options,
-    visibleText: directShapeText(inner),
+    visibleText: textInfo.value,
+    textExists: textInfo.exists,
     inner
   });
   const split = splitLeadingShapeContent(inner);
@@ -654,12 +1036,13 @@ function inspectShapes(xml, masterById, pageName, result, context = {}) {
     const block = xml.slice(start, end);
     const openEnd = block.indexOf('>');
     const openTag = openEnd === -1 ? block : block.slice(0, openEnd + 1);
-    const inner = block.slice(openEnd + 1, -'</Shape>'.length);
-    const visibleText = directShapeText(inner);
+    const inner = /\/>$/.test(openTag) ? '' : block.slice(openEnd + 1, -'</Shape>'.length);
+    const textInfo = directShapeTextInfo(inner);
+    const visibleText = textInfo.value;
     const master = masterById[attrValue(openTag, 'Master')] || {};
     const isContainerRoot = Boolean(master.isContainer);
     const parentIsContainerRoot = Boolean(context.insideContainerRoot);
-    if (rules.keepDecorativeShapesUnchanged && attrValue(openTag, 'MasterShape') && !visibleText) {
+    if (rules.keepDecorativeShapesUnchanged && attrValue(openTag, 'MasterShape') && !textInfo.exists) {
       inspectShapes(inner, masterById, pageName, result, {
         ...context,
         insideContainerRoot: parentIsContainerRoot || isContainerRoot
@@ -667,7 +1050,7 @@ function inspectShapes(xml, masterById, pageName, result, context = {}) {
       cursor = end;
       continue;
     }
-    if (rules.keepDecorativeShapesUnchanged && parentIsContainerRoot && attrValue(openTag, 'MasterShape') && !visibleText) {
+    if (rules.keepDecorativeShapesUnchanged && parentIsContainerRoot && attrValue(openTag, 'MasterShape') && !textInfo.exists) {
       inspectShapes(inner, masterById, pageName, result, {
         ...context,
         insideContainerRoot: true
@@ -675,7 +1058,7 @@ function inspectShapes(xml, masterById, pageName, result, context = {}) {
       cursor = end;
       continue;
     }
-    if (shapeKind(openTag) === 'object' && !attrValue(openTag, 'Master') && !attrValue(openTag, 'NameU')) {
+    if (shapeKind(openTag) === 'object' && !attrValue(openTag, 'Master') && !attrValue(openTag, 'NameU') && !textInfo.exists) {
       inspectShapes(inner, masterById, pageName, result, {
         ...context,
         insideContainerRoot: parentIsContainerRoot || isContainerRoot
@@ -686,6 +1069,7 @@ function inspectShapes(xml, masterById, pageName, result, context = {}) {
     const type = displayShapeType(openTag, masterById, visibleText, {
       ...context,
       rules,
+      textExists: textInfo.exists,
       inner
     });
     const connection = type.kind === 'connector' ? connectorBindingForShape(openTag, context) : null;
@@ -706,14 +1090,16 @@ function inspectShapes(xml, masterById, pageName, result, context = {}) {
         nameU: attrValue(openTag, 'NameU') || '',
         name: attrValue(openTag, 'Name') || '',
         text: visibleText,
+        textExists: textInfo.exists,
+        userValueSource: userValueSource(pageName, attrValue(openTag, 'ID'), textInfo),
         kind: type.kind,
         eligibleForCmdb: type.eligibleForCmdb,
         visualRole: type.visualRole,
         contextPath: shapeContextPath,
         connection,
-        shapeData: directPropertyRows(block.slice(openEnd + 1, -'</Shape>'.length))
+        shapeData: directPropertyRows(inner)
       });
-      for (const row of directPropertyRows(block.slice(openEnd + 1, -'</Shape>'.length))) {
+      for (const row of directPropertyRows(inner)) {
         existing.shapeData = existing.shapeData || [];
         if (!existing.shapeData.some((item) => item.name === row.name)) existing.shapeData.push(row);
       }
@@ -763,7 +1149,7 @@ function inspectVsdxFile(inputFile, options = {}) {
       inspectShapes(pageXml, masterById, fileName, result, {
         rules,
         connectionsByShapeId: parsePageConnections(pageXml),
-        shapeIndexById: collectShapeIndex(pageXml, masterById, { rules })
+        shapeIndexById: collectShapeIndex(pageXml, masterById, { rules, pageName: fileName })
       });
     }
     return Array.from(result.values()).map((item) => ({
@@ -800,19 +1186,147 @@ function inspectVsdxContractMetadata(inputFile) {
         if (start === -1) break;
         const end = findShapeEnd(xml, start);
         if (end === -1) break;
-        const block = xml.slice(start, end);
-        const openEnd = block.indexOf('>');
-        for (const row of directPropertyRows(block.slice(openEnd + 1, -'</Shape>'.length))) {
-          if (row.name === 'BAA_ContractVersionId' && row.value) metadata.contractVersionId = row.value;
-          if (row.name === 'BAA_ContractVersionCode' && row.value) metadata.contractVersionCode = row.value;
-          if (row.name === 'BAA_ContractVersionChecksum' && row.value) metadata.contractVersionChecksum = row.value;
-          if (row.name === 'BAA_PreparedAt' && row.value) metadata.preparedAt = row.value;
+    const block = xml.slice(start, end);
+    const openEnd = block.indexOf('>');
+        const openTag = openEnd === -1 ? block : block.slice(0, openEnd + 1);
+        const shapeId = attrValue(openTag, 'ID') || '';
+        const inner = /\/>$/.test(openTag) ? '' : block.slice(openEnd + 1, -'</Shape>'.length);
+        for (const row of directPropertyRows(inner)) {
+          if ((row.name === '_baa_ContractVersionId' || row.name === 'BAA_ContractVersionId') && row.value) metadata.contractVersionId = row.value;
+          if ((row.name === '_baa_ContractVersionCode' || row.name === 'BAA_ContractVersionCode') && row.value) metadata.contractVersionCode = row.value;
+          if ((row.name === '_baa_ContractVersionChecksum' || row.name === 'BAA_ContractVersionChecksum') && row.value) metadata.contractVersionChecksum = row.value;
+          if ((row.name === '_baa_ContractObject' || row.name === 'BAA_ContractObject') && row.value) metadata.contractObject = row.value;
+          if ((row.name === '_baa_PreparedAt' || row.name === 'BAA_PreparedAt') && row.value) metadata.preparedAt = row.value;
         }
-        if (metadata.contractVersionId || metadata.contractVersionCode || metadata.contractVersionChecksum) return metadata;
+        if (metadata.contractVersionId || metadata.contractVersionCode || metadata.contractVersionChecksum) {
+          metadata.contractPage = fileName;
+          metadata.contractShapeId = shapeId;
+          metadata.contractPageShapeKey = shapeId ? `${fileName}:${shapeId}` : '';
+          return metadata;
+        }
         cursor = end;
       }
     }
     return metadata;
+  });
+}
+
+function rowsByName(rows) {
+  const result = {};
+  for (const row of rows || []) result[row.name] = row;
+  return result;
+}
+
+function rowValue(byName, ...names) {
+  for (const name of names) {
+    if (byName[name] && byName[name].value) return byName[name].value;
+  }
+  return '';
+}
+
+function extractBaaObjectsInXml(xml, pageName, result) {
+  let cursor = 0;
+  while (cursor < xml.length) {
+    const start = xml.indexOf('<Shape ', cursor);
+    if (start === -1) break;
+    const end = findShapeEnd(xml, start);
+    if (end === -1) break;
+    const block = xml.slice(start, end);
+    const openEnd = block.indexOf('>');
+    const openTag = openEnd === -1 ? block : block.slice(0, openEnd + 1);
+    const inner = /\/>$/.test(openTag) ? '' : block.slice(openEnd + 1, -'</Shape>'.length);
+    const rows = directPropertyRows(inner);
+    const byName = rowsByName(rows);
+    const cmdbClass = rowValue(byName, 'template_Class', 'CMDB_Class');
+    const relationType = rowValue(byName, 'template_RelationType', 'CMDB_RelationType');
+    const mappingKey = rowValue(byName, '_baa_MappingKey', 'BAA_MappingKey');
+    if (cmdbClass || relationType || mappingKey) {
+      const shapeId = attrValue(openTag, 'ID') || '';
+      const sourceShapeId = rowValue(byName, '_baa_SourceShapeId', 'BAA_SourceShapeId');
+      const destinationShapeId = rowValue(byName, '_baa_DestinationShapeId', 'BAA_DestinationShapeId');
+      const attributeRules = rows
+        .filter((row) => /^_baa_AttributeRule_/.test(row.name) || /^BAA_AttributeRule_/.test(row.name))
+        .map((row) => {
+          try {
+            return {
+              rowName: row.name,
+              label: row.label,
+              rule: JSON.parse(row.value || '{}')
+            };
+          } catch (err) {
+            return {
+              rowName: row.name,
+              label: row.label,
+              parseError: err && err.message || 'invalid JSON',
+              raw: row.value || ''
+            };
+          }
+        });
+      const unexpectedTechnicalRows = rows
+        .filter((row) => /^baa_/i.test(row.name || ''))
+        .map((row) => ({
+          name: row.name,
+          label: row.label,
+          value: row.value
+        }));
+      result.push({
+        page: pageName,
+        shapeId,
+        pageShapeKey: `${pageName}:${shapeId}`,
+        mappingKey,
+        typeKey: rowValue(byName, '_baa_TypeKey', 'BAA_TypeKey'),
+        roleKey: rowValue(byName, '_baa_RoleKey', 'BAA_RoleKey'),
+        visualObjectId: rowValue(byName, '_baa_VisualObjectId', 'BAA_VisualObjectId'),
+        anchorShapeId: rowValue(byName, '_baa_AnchorShapeId', 'BAA_AnchorShapeId'),
+        aggregationKind: rowValue(byName, '_baa_AggregationKind', 'BAA_AggregationKind'),
+        decomposed: rowValue(byName, '_baa_Decomposed', 'BAA_Decomposed'),
+        cmdbClass,
+        cmdbClasses: cmdbClass.split(',').map((item) => item.trim()).filter(Boolean),
+        action: rowValue(byName, '_baa_Action', 'BAA_Action'),
+        objectId: rowValue(byName, '_baa_ObjectId', 'BAA_ObjectId'),
+        objectType: rowValue(byName, '_baa_ObjectType', 'BAA_ObjectType'),
+        relationType: relationType || (sourceShapeId || destinationShapeId ? cmdbClass : ''),
+        sourceShapeId,
+        sourceKind: rowValue(byName, '_baa_SourceKind', 'BAA_SourceKind'),
+        sourceText: rowValue(byName, '_baa_SourceText', 'BAA_SourceText'),
+        sourceObjectType: rowValue(byName, '_baa_SourceObjectType', 'BAA_SourceObjectType'),
+        destinationShapeId,
+        destinationKind: rowValue(byName, '_baa_DestinationKind', 'BAA_DestinationKind'),
+        destinationText: rowValue(byName, '_baa_DestinationText', 'BAA_DestinationText'),
+        destinationObjectType: rowValue(byName, '_baa_DestinationObjectType', 'BAA_DestinationObjectType'),
+        relationBindingStatus: rowValue(byName, '_baa_RelationBindingStatus', 'BAA_RelationBindingStatus'),
+        relationBindingIssue: rowValue(byName, '_baa_ValidationIssue', 'BAA_ValidationIssue'),
+        attributeRules,
+        unexpectedTechnicalRows,
+        values: rows.filter((row) =>
+          (/^template_/.test(row.name) && row.name !== 'template_Class') ||
+          (/^CMDB_/.test(row.name) && row.name !== 'CMDB_Class')
+        ).map((row) => ({
+          name: row.name,
+          label: row.label,
+          value: row.value,
+          type: row.type,
+          format: row.format
+        }))
+      });
+    }
+    extractBaaObjectsInXml(inner, pageName, result);
+    cursor = end;
+  }
+}
+
+function extractBaaObjectsFromVsdx(inputFile) {
+  return withUnpackedVsdx(inputFile, (workRoot) => {
+    const pagesDir = path.join(workRoot, 'visio', 'pages');
+    const objects = [];
+    for (const fileName of pageFilesIn(workRoot)) {
+      const xml = fs.readFileSync(path.join(pagesDir, fileName), 'utf8');
+      extractBaaObjectsInXml(xml, fileName, objects);
+    }
+    return {
+      contractMetadata: inspectVsdxContractMetadata(inputFile),
+      objects
+    };
   });
 }
 
@@ -830,10 +1344,12 @@ function enrichVsdxFile(inputFile, outputFile, options = {}) {
         pageName: fileName,
         classByTypeKey: options.classByTypeKey || {},
         classByPageShapeId: options.classByPageShapeId || {},
+        metadataByPageShapeId: options.metadataByPageShapeId || {},
         rules,
         connectionsByShapeId: parsePageConnections(original),
-        shapeIndexById: collectShapeIndex(original, masterById, { rules }),
+        shapeIndexById: collectShapeIndex(original, masterById, { rules, pageName: fileName }),
         contractVersion: options.contractVersion || null,
+        contractPageShapeKey: options.contractPageShapeKey || '',
         preparedAt: options.preparedAt || '',
         preparedBy: options.preparedBy || ''
       };
@@ -871,5 +1387,6 @@ export {
   enrichVsdxFile,
   inspectVsdxFile,
   inspectVsdxAggregates,
-  inspectVsdxContractMetadata
+  inspectVsdxContractMetadata,
+  extractBaaObjectsFromVsdx
 };
