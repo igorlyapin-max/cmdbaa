@@ -443,6 +443,7 @@ function cmdbAttributeFields(metadata = {}) {
       constantValue: sourceRule.constantValue || '',
       defaultValue: sourceRule.defaultValue || '',
       overrideAttribute: sourceRule.overrideAttribute || '',
+      inherited: Boolean(field.inherited),
       rowName: field.rowName || 'template_Attribute'
     })));
     if (sourceRole === 'source' || sourceRole === 'destination' || mode === 'constant') continue;
@@ -461,11 +462,17 @@ function cmdbAttributeFields(metadata = {}) {
 
 function rowXml(field) {
   const invisibleCell = field.invisible ? "<Cell N='Invisible' V='1' F='TRUE'/>" : "<Cell N='Invisible' V='0'/>";
-  return `<Row N='${xmlAttr(field.name)}'><Cell N='Value' V='${xmlAttr(field.value)}' U='STR'/><Cell N='Prompt' V='' U='STR'/><Cell N='Label' V='${xmlAttr(field.label)}' U='STR'/><Cell N='Format' V='${xmlAttr(field.format)}' U='STR'/><Cell N='SortKey' V='' U='STR'/><Cell N='Type' V='${xmlAttr(field.type)}'/>${invisibleCell}<Cell N='Verify' V='0'/><Cell N='DataLinked' V='0'/><Cell N='LangID' V='ru-RU' U='STR'/><Cell N='Calendar' V='0'/></Row>`;
+  const value = String(field.value || '');
+  const valueFormula = visioStringFormula(value);
+  return `<Row N='${xmlAttr(field.name)}'><Cell N='Value' V='${xmlAttr(value)}' F='${xmlAttr(valueFormula)}' U='STR'/><Cell N='Prompt' V='' U='STR'/><Cell N='Label' V='${xmlAttr(field.label)}' U='STR'/><Cell N='Format' V='${xmlAttr(field.format)}' U='STR'/><Cell N='SortKey' V='' U='STR'/><Cell N='Type' V='${xmlAttr(field.type)}'/>${invisibleCell}<Cell N='Verify' V='0'/><Cell N='DataLinked' V='0'/><Cell N='LangID' V='ru-RU' U='STR'/><Cell N='Calendar' V='0'/></Row>`;
 }
 
 function propertySectionXml(fields) {
   return `<Section N='Property'>${fields.map(rowXml).join('')}</Section>`;
+}
+
+function visioStringFormula(value) {
+  return `"${String(value || '').replace(/"/g, '""')}"`;
 }
 
 function escapeRegExp(value) {
@@ -494,7 +501,15 @@ function mergePropertySection(existing, fields) {
 function cellValue(rowXmlText, name) {
   const cellMatch = rowXmlText.match(new RegExp(`<Cell\\s+N=['"]${escapeRegExp(name)}['"][^>]*>`));
   if (!cellMatch) return '';
+  const formulaValue = visioFormulaStringValue(attrValue(cellMatch[0], 'F'));
+  if (formulaValue !== null) return formulaValue;
   return attrValue(cellMatch[0], 'V');
+}
+
+function visioFormulaStringValue(formula) {
+  const decoded = decodeXmlAttr(formula || '').trim();
+  if (decoded.length < 2 || decoded[0] !== '"' || decoded[decoded.length - 1] !== '"') return null;
+  return decoded.slice(1, -1).replace(/""/g, '"');
 }
 
 function decodeXmlAttr(value) {
@@ -1224,7 +1239,78 @@ function rowValue(byName, ...names) {
   return '';
 }
 
-function extractBaaObjectsInXml(xml, pageName, result) {
+function uniqueList(values) {
+  const result = [];
+  const seen = new Set();
+  for (const value of values || []) {
+    const normalized = String(value || '').trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function classNamesFromValue(value) {
+  return uniqueList(String(value || '').split(','));
+}
+
+function classNamesWithRows(rows) {
+  const result = [];
+  for (const row of rows || []) {
+    const templateMatch = String(row.name || '').match(/^template_([^_]+)_/);
+    const ruleMatch = String(row.name || '').match(/^_baa_AttributeRule_([^_]+)_/);
+    const legacyRuleMatch = String(row.name || '').match(/^BAA_AttributeRule_([^_]+)_/);
+    const className = templateMatch && templateMatch[1] || ruleMatch && ruleMatch[1] || legacyRuleMatch && legacyRuleMatch[1] || '';
+    if (className) result.push(className);
+  }
+  return uniqueList(result);
+}
+
+function directCellValue(block, name) {
+  const match = block.match(new RegExp(`<Cell\\b[^>]*N=['"]${name}['"][^>]*/?>`));
+  return match ? decodeXmlAttr(attrValue(match[0], 'V')) : '';
+}
+
+function numericCellValue(block, name) {
+  const raw = directCellValue(block, name);
+  if (!String(raw || '').trim()) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+function shapeGeometry(block) {
+  return {
+    pinX: numericCellValue(block, 'PinX'),
+    pinY: numericCellValue(block, 'PinY'),
+    width: numericCellValue(block, 'Width'),
+    height: numericCellValue(block, 'Height'),
+    beginX: numericCellValue(block, 'BeginX'),
+    beginY: numericCellValue(block, 'BeginY'),
+    endX: numericCellValue(block, 'EndX'),
+    endY: numericCellValue(block, 'EndY')
+  };
+}
+
+function shapeIdsInXml(xml) {
+  const result = [];
+  let cursor = 0;
+  while (cursor < xml.length) {
+    const start = xml.indexOf('<Shape ', cursor);
+    if (start === -1) break;
+    const end = findShapeEnd(xml, start);
+    if (end === -1) break;
+    const block = xml.slice(start, end);
+    const openEnd = block.indexOf('>');
+    const openTag = openEnd === -1 ? block : block.slice(0, openEnd + 1);
+    const shapeId = attrValue(openTag, 'ID') || '';
+    if (shapeId) result.push(shapeId);
+    cursor = end;
+  }
+  return result;
+}
+
+function extractBaaObjectsInXml(xml, pageName, result, pageConnections = {}) {
   let cursor = 0;
   while (cursor < xml.length) {
     const start = xml.indexOf('<Shape ', cursor);
@@ -1241,9 +1327,16 @@ function extractBaaObjectsInXml(xml, pageName, result) {
     const relationType = rowValue(byName, 'template_RelationType', 'CMDB_RelationType');
     const mappingKey = rowValue(byName, '_baa_MappingKey', 'BAA_MappingKey');
     if (cmdbClass || relationType || mappingKey) {
+      const objectType = rowValue(byName, '_baa_ObjectType', 'BAA_ObjectType');
+      const explicitClasses = classNamesFromValue(cmdbClass);
+      const rowClasses = classNamesWithRows(rows);
+      const cmdbClasses = objectType === 'Relation' && rowClasses.length
+        ? explicitClasses.filter((className) => rowClasses.includes(className))
+        : explicitClasses;
       const shapeId = attrValue(openTag, 'ID') || '';
-      const sourceShapeId = rowValue(byName, '_baa_SourceShapeId', 'BAA_SourceShapeId');
-      const destinationShapeId = rowValue(byName, '_baa_DestinationShapeId', 'BAA_DestinationShapeId');
+      const currentConnection = pageConnections[shapeId] || {};
+      const sourceShapeId = currentConnection.sourceShapeId || rowValue(byName, '_baa_SourceShapeId', 'BAA_SourceShapeId');
+      const destinationShapeId = currentConnection.destinationShapeId || rowValue(byName, '_baa_DestinationShapeId', 'BAA_DestinationShapeId');
       const attributeRules = rows
         .filter((row) => /^_baa_AttributeRule_/.test(row.name) || /^BAA_AttributeRule_/.test(row.name))
         .map((row) => {
@@ -1273,6 +1366,8 @@ function extractBaaObjectsInXml(xml, pageName, result) {
         page: pageName,
         shapeId,
         pageShapeKey: `${pageName}:${shapeId}`,
+        geometry: shapeGeometry(block),
+        containedShapeIds: shapeIdsInXml(inner).filter((id) => id !== shapeId),
         mappingKey,
         typeKey: rowValue(byName, '_baa_TypeKey', 'BAA_TypeKey'),
         roleKey: rowValue(byName, '_baa_RoleKey', 'BAA_RoleKey'),
@@ -1281,10 +1376,10 @@ function extractBaaObjectsInXml(xml, pageName, result) {
         aggregationKind: rowValue(byName, '_baa_AggregationKind', 'BAA_AggregationKind'),
         decomposed: rowValue(byName, '_baa_Decomposed', 'BAA_Decomposed'),
         cmdbClass,
-        cmdbClasses: cmdbClass.split(',').map((item) => item.trim()).filter(Boolean),
+        cmdbClasses,
         action: rowValue(byName, '_baa_Action', 'BAA_Action'),
         objectId: rowValue(byName, '_baa_ObjectId', 'BAA_ObjectId'),
-        objectType: rowValue(byName, '_baa_ObjectType', 'BAA_ObjectType'),
+        objectType,
         relationType: relationType || (sourceShapeId || destinationShapeId ? cmdbClass : ''),
         sourceShapeId,
         sourceKind: rowValue(byName, '_baa_SourceKind', 'BAA_SourceKind'),
@@ -1310,7 +1405,7 @@ function extractBaaObjectsInXml(xml, pageName, result) {
         }))
       });
     }
-    extractBaaObjectsInXml(inner, pageName, result);
+    extractBaaObjectsInXml(inner, pageName, result, pageConnections);
     cursor = end;
   }
 }
@@ -1321,7 +1416,7 @@ function extractBaaObjectsFromVsdx(inputFile) {
     const objects = [];
     for (const fileName of pageFilesIn(workRoot)) {
       const xml = fs.readFileSync(path.join(pagesDir, fileName), 'utf8');
-      extractBaaObjectsInXml(xml, fileName, objects);
+      extractBaaObjectsInXml(xml, fileName, objects, parsePageConnections(xml));
     }
     return {
       contractMetadata: inspectVsdxContractMetadata(inputFile),

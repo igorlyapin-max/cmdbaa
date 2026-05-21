@@ -10,11 +10,14 @@ All application routes live under `/cmdbuild` so the browser sends the CMDBuild
 ```text
 /cmdbuild/baa/ui/prepare-template
 /cmdbuild/baa/ui/check-template
+/cmdbuild/baa/ui/prepare-objects
 /cmdbuild/baa/ui/verify
 /cmdbuild/baa/ui/create-objects
 /cmdbuild/baa/ui/schema
 /cmdbuild/baa/ui/contracts
 /cmdbuild/baa/ui/settings
+/cmdbuild/baa/ui/help
+/cmdbuild/baa/ui/about
 /cmdbuild/baa/api/session
 /cmdbuild/baa/api/csrf
 ```
@@ -22,6 +25,28 @@ All application routes live under `/cmdbuild` so the browser sends the CMDBuild
 The frontend never reads `CMDBuild-Authorization`. The proxy reads it from the
 incoming cookie, validates `/cmdbuild/services/rest/v3/sessions/current`, and
 uses the token server-side for future CMDBuild REST calls.
+
+## Documentation
+
+User and operator documentation lives in `docs/`:
+
+- `docs/user-help.md` - user help, workflow blocks, contracts, template
+  enrichment, dangling links, object creation, and mapping-object terminology.
+- `docs/admin-guide.md` - administrator guide for proxy settings, schema
+  bootstrap, checksum validation, CMDB validators, and operational agreements.
+- `docs/verification-contracts.md` - naming, storage classes, schemas, and
+  exchange order for BAA verification contracts and `cmdbcustompages`.
+- `docs/cmdbcustompage-verification-exchange.md` - formal request/response
+  contract to provide to the `cmdbcustompage` side.
+- `docs/e2e-verification-scenario.md` - manual E2E scenario and future
+  smoke-test checklist for verification.
+- `docs/architecture/` - architecture artifacts prepared according to
+  `../aa.txt`: business processes, information model, deployment, OpenAPI
+  outline, HealthCheck map, secrets map, and event log map.
+
+When changing contract behavior, template enrichment, verification, object
+creation, reverse proxy routes, ports, or CMDBuild schema assumptions, update the
+corresponding documentation in the same change.
 
 ## Development
 
@@ -46,7 +71,8 @@ names, are one type; different names are different types.
 Checksum verification uses a sidecar file named `<filename.ext>.<sumextension>`.
 The left menu is grouped into two levels. `Работа с шаблонами` contains
 `Контракты` and `Подготовить шаблон`; top-level workflow entries then continue
-with `Проверить шаблон`, `Верифицировать`, and `Создать объекты`. `Настройки`
+with `Проверить шаблон`, `Подготовить объекты`, `Верификация`, and
+`Создать объекты`. `Настройки`
 is placed at the bottom and contains `Общие`, `Типы`, and `Схема`. `Общие` controls `sumextension` and
 whether checksum verification is performed during template preparation. `Типы`
 controls only Visio type recognition rules, keeping them separate from the
@@ -105,7 +131,8 @@ matches, BAA technical fields are readable, there are no visible lowercase
 `baa_*` fields, figures have `_baa_MappingKey` and `template_Class`, and
 connector binding statuses are known. This page does not validate business
 data completeness and does not decide whether CMDB objects can be created.
-That is the responsibility of `Верифицировать`.
+That is the responsibility of `Верификация` and the object plan in
+`Подготовить объекты`.
 
 ## Инструкция: маппинг объектов и связей
 
@@ -224,17 +251,17 @@ ACL.Protocol   = self.Protocol
 override на линии -> endpoint/source/destination -> self/manual/constant -> ошибка верификации
 ```
 
-На странице `Создать объекты` файл сначала проходит техническую проверку
+На странице `Подготовить объекты` файл сначала проходит техническую проверку
 шаблона. Бизнес-верификация не блокирует построение плана: если обязательные
 атрибуты CMDB еще не заполнены, BAA показывает их как недозаполненные поля в
 dry-run плане. Реальное выполнение создания в CMDBuild блокируется, пока в
 плане есть незаполненные обязательные атрибуты или ошибки бизнес-верификации.
-Недостающие обязательные значения можно временно дозаполнить прямо на странице
-`Создать объекты`: после загрузки файла BAA показывает поля ввода рядом с
+Недостающие обязательные значения можно временно дозаполнить на странице
+`Подготовить объекты`: после загрузки файла BAA показывает поля ввода рядом с
 `missingAttributes`, пользователь вводит значения, нажимает `Перестроить план`,
 и эти значения попадают в payload как `ui_override`. Это не изменяет VSDX и
 предназначено только для ручного завершения конкретного запуска создания.
-Кнопка `Загрузить VSDX и сформировать план` строит dry-run план:
+Кнопка `Сформировать план` строит dry-run план:
 
 - `kind=object` означает обычный CMDB-экземпляр с одной фигуры;
 - `kind=context` означает экземпляр, собранный из линии, source-объекта и
@@ -249,9 +276,14 @@ dry-run плане. Реальное выполнение создания в CM
 - `canExecute=false` означает, что реальная запись в CMDBuild будет заблокирована
   до устранения недостающих значений или блокирующих ошибок.
 
-Если включить выполнение создания, BAA отправляет в CMDBuild ровно тот payload,
-который показан в плане. Результат создания сохраняет тот же контекст: индекс
-плана, тип элемента `object/context`, endpoint-ы, payload и источники атрибутов.
+Отдельный пункт меню `Создать объекты` отправляет в CMDBuild payload из
+последнего подготовленного плана. Исполнитель выбирает полноту запуска: режим
+`Выбрать классы` создает все объекты выбранных классов, режим `Выбрать объекты`
+создает только отмеченные строки плана. Обязательность и блокирующие ошибки
+считаются для выбранной части. При отсутствии файла контрольной суммы или при
+ошибке проверки checksum создание не выполняется. Результат создания сохраняет
+тот же контекст: индекс плана, тип элемента `object/context`, endpoint-ы,
+payload и источники атрибутов.
 Это нужно, чтобы ошибка CMDBuild разбиралась по конкретному экземпляру и было
 видно, из какой части Visio-схемы взялось каждое значение.
 
@@ -272,12 +304,15 @@ Direct same-origin URLs:
 ```text
 http://127.0.0.1:8094/cmdbuild/baa/ui/prepare-template
 http://127.0.0.1:8094/cmdbuild/baa/ui/check-template
+http://127.0.0.1:8094/cmdbuild/baa/ui/prepare-objects
 http://127.0.0.1:8094/cmdbuild/baa/ui/schema
 http://127.0.0.1:8094/cmdbuild/baa/ui/contracts
 http://127.0.0.1:8094/cmdbuild/baa/ui/settings
 http://127.0.0.1:8094/cmdbuild/baa/ui/types
 http://127.0.0.1:8094/cmdbuild/baa/ui/verify
 http://127.0.0.1:8094/cmdbuild/baa/ui/create-objects
+http://127.0.0.1:8094/cmdbuild/baa/ui/help
+http://127.0.0.1:8094/cmdbuild/baa/ui/about
 ```
 
 Settings:
