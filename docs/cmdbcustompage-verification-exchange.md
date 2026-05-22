@@ -52,6 +52,18 @@ Accept: application/json
       "help": ""
     }
   ],
+  "variables": {
+    "verificationScope": "prod",
+    "sourceSegment": ["office", "dmz"]
+  },
+  "variableSources": [
+    {
+      "name": "verificationScope",
+      "sourceKind": "contractparam",
+      "sourceExpression": "environment",
+      "valuePresent": true
+    }
+  ],
   "endpoint": {
     "code": "network-acl-check",
     "params": {
@@ -86,6 +98,14 @@ Accept: application/json
 `payload`. Переменные версии контракта передаются отдельно в
 `contractParams`; это тот же набор, который описан в input contract как
 `contractparam.*`.
+
+`variables` содержит вычисленные переменные отправки из версии BAA-контракта.
+Это параметры запроса верхнего уровня, которые могут быть собраны из
+`contractparam`, `session`, выражений Visio или значений готовых объектов плана
+по `class.ClassName.Attribute`. `variableSources` нужен для диагностики: он
+показывает, откуда BAA пытался получить каждую переменную и было ли значение
+вычислено. Если источник `class` дал несколько разных значений, BAA передает
+массив; валидатор должен трактовать это как множественное входное значение.
 
 ## Response body
 

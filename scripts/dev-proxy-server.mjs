@@ -1337,6 +1337,59 @@ function mergeContractParams(previous = [], current = []) {
   };
 }
 
+function normalizeVerificationRequestVariable(variable = {}) {
+  const name = String(variable.name || variable.Name || '').trim();
+  if (!name) return null;
+  const sourceKind = String(variable.sourceKind || variable.SourceKind || 'expression').trim() || 'expression';
+  return {
+    name,
+    description: String(variable.description || variable.Description || name).trim() || name,
+    type: String(variable.type || variable.Type || 'string').trim() || 'string',
+    mandatory: Boolean(variable.mandatory || variable.Mandatory || variable.required || variable.Required),
+    sourceKind,
+    sourceExpression: String(variable.sourceExpression || variable.SourceExpression || '').trim(),
+    defaultValue: String(variable.defaultValue || variable.DefaultValue || '')
+  };
+}
+
+function normalizeVerificationRequestVariables(variables = []) {
+  const byName = new Map();
+  for (const item of Array.isArray(variables) ? variables : []) {
+    const variable = normalizeVerificationRequestVariable(item);
+    if (!variable) continue;
+    byName.set(variable.name, { ...byName.get(variable.name), ...variable });
+  }
+  return Array.from(byName.values()).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+}
+
+function verificationRequestVariableSignature(variable) {
+  return JSON.stringify(normalizeVerificationRequestVariable(variable) || {});
+}
+
+function mergeVerificationRequestVariables(previous = [], current = []) {
+  const byName = new Map();
+  let changed = false;
+  for (const variable of normalizeVerificationRequestVariables(previous)) byName.set(variable.name, variable);
+  for (const variable of normalizeVerificationRequestVariables(current)) {
+    const existing = byName.get(variable.name);
+    if (!existing || verificationRequestVariableSignature(existing) !== verificationRequestVariableSignature(variable)) changed = true;
+    byName.set(variable.name, { ...existing, ...variable });
+  }
+  return {
+    verificationRequestVariables: Array.from(byName.values()).sort((a, b) => String(a.name).localeCompare(String(b.name))),
+    changed
+  };
+}
+
+function normalizeVerificationBinding(value = {}) {
+  const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return {
+    enabled: Boolean(raw.enabled),
+    inputContractCode: String(raw.inputContractCode || raw.InputContractCode || '').trim(),
+    inputContractVersion: String(raw.inputContractVersion || raw.InputContractVersion || '').trim()
+  };
+}
+
 function publicContractVersion(version) {
   if (!version) return null;
   return {
@@ -1774,6 +1827,13 @@ function endpointObjectForRole(context, role) {
 function expressionTokenValue(token, context) {
   const text = String(token || '').trim();
   if (text.startsWith('contractparam.')) return contractParamValue(context.contractParams || [], text.slice('contractparam.'.length));
+  if (text.startsWith('session.')) return context.session && context.session[text.slice('session.'.length)];
+  if (text.startsWith('class.')) {
+    const parts = text.slice('class.'.length).split('.');
+    const className = parts.shift() || '';
+    const attrName = parts.join('.');
+    return planPayloadValueByClass(context.plan || {}, className, attrName);
+  }
   if (text.startsWith('visioparam.')) return visioParamValue(context.object, text.slice('visioparam.'.length));
   for (const role of ['source', 'destination', 'relation']) {
     const prefix = `${role}.visioparam.`;
@@ -2452,7 +2512,8 @@ function buildVerificationInputContractSchema(contractVersion = {}, plan = {}) {
       destinationClass: item.endpoints && item.endpoints.destination && (item.endpoints.destination.cmdbClasses || [])[0] || '',
       relationBindingStatus: item.relationBindingStatus || ''
     })),
-    contractParams: normalizeContractParams(rules.contractParams || [])
+    contractParams: normalizeContractParams(rules.contractParams || []),
+    requestVariables: normalizeVerificationRequestVariables(rules.verificationRequestVariables || [])
   };
 }
 
@@ -2496,7 +2557,55 @@ function buildVerificationOutputContractSchema(contractVersion = {}) {
   };
 }
 
-function buildVerificationPayload(plan = {}, inputContract = {}, endpoint = {}, params = {}, contractParams = []) {
+function planPayloadValueByClass(plan = {}, className = '', attrName = '') {
+  const matches = [];
+  for (const object of plan.objects || []) {
+    if (className && object.className !== className) continue;
+    const value = planPayloadValue(object.payload || {}, attrName);
+    if (typeof value !== 'undefined' && String(value || '').trim()) matches.push(value);
+  }
+  const unique = Array.from(new Set(matches.map((item) => String(item))));
+  if (unique.length === 1) return unique[0];
+  if (unique.length > 1) return unique;
+  return undefined;
+}
+
+function resolveVerificationRequestVariables(plan = {}, variables = [], context = {}) {
+  const resolved = {};
+  const sources = [];
+  const issues = [];
+  const contractParams = normalizeContractParams(context.contractParams || []);
+  const session = context.session || {};
+  for (const variable of normalizeVerificationRequestVariables(variables)) {
+    let value;
+    const source = variable.sourceExpression || '';
+    if (variable.sourceKind === 'constant') value = variable.defaultValue;
+    else if (variable.sourceKind === 'class' || source.startsWith('class.')) {
+      const classSource = source.startsWith('class.') ? source.slice('class.'.length) : source;
+      const parts = classSource.split('.');
+      const className = parts.shift() || '';
+      const attrName = parts.join('.');
+      value = planPayloadValueByClass(plan, className, attrName);
+    } else if (variable.sourceKind === 'contractparam' || source.startsWith('contractparam.')) value = contractParamValue(contractParams, source.startsWith('contractparam.') ? source.slice('contractparam.'.length) : source);
+    else if (variable.sourceKind === 'session' || source.startsWith('session.')) value = session[source.startsWith('session.') ? source.slice('session.'.length) : source];
+    else if (hasExpression(source)) {
+      const object = (plan.objects || [])[0] || {};
+      value = evaluateExpression(source, { object, plan, shapeByKey: new Map(), contractParams, session });
+    } else if (source) value = source;
+    if ((typeof value === 'undefined' || value === null || String(Array.isArray(value) ? value.join('') : value).trim() === '') && variable.defaultValue) value = variable.defaultValue;
+    if (typeof value !== 'undefined' && value !== null) resolved[variable.name] = value;
+    sources.push({ name: variable.name, sourceKind: variable.sourceKind, sourceExpression: source, valuePresent: Object.prototype.hasOwnProperty.call(resolved, variable.name) });
+    if (variable.mandatory && !Object.prototype.hasOwnProperty.call(resolved, variable.name)) {
+      issues.push({ level: 'error', code: 'verification_request_variable_missing', variable: variable.name, message: `Не вычислена обязательная переменная отправки "${variable.name}".` });
+    }
+    if (Array.isArray(value)) {
+      issues.push({ level: variable.mandatory ? 'error' : 'warning', code: 'verification_request_variable_ambiguous', variable: variable.name, message: `Переменная отправки "${variable.name}" неоднозначна: найдено ${value.length} значений.` });
+    }
+  }
+  return { variables: resolved, variableSources: sources, issues };
+}
+
+function buildVerificationPayload(plan = {}, inputContract = {}, endpoint = {}, params = {}, contractParams = [], requestVariables = {}, variableSources = []) {
   return {
     source: 'CMDB BAA',
     inputContract: {
@@ -2505,6 +2614,8 @@ function buildVerificationPayload(plan = {}, inputContract = {}, endpoint = {}, 
       checksum: inputContract.schemaChecksum || ''
     },
     contractParams: normalizeContractParams(contractParams),
+    variables: requestVariables || {},
+    variableSources: variableSources || [],
     endpoint: {
       code: endpoint.code || '',
       params
@@ -3041,11 +3152,21 @@ async function preparedVerificationContext(authToken, input = {}) {
 async function generateVerificationContracts(authToken, input = {}) {
   const context = await preparedVerificationContext(authToken, input);
   if (!context.success) return context;
-  const inputSchema = buildVerificationInputContractSchema(context.technical.contractVersion, context.plan);
-  const outputSchema = buildVerificationOutputContractSchema(context.technical.contractVersion);
+  const requestedVariables = normalizeVerificationRequestVariables(Array.isArray(input.verificationRequestVariables) ? input.verificationRequestVariables : []);
+  let contractVersionForSchema = context.technical.contractVersion;
+  if (requestedVariables.length) {
+    const rules = parseRulesJson(context.technical.contractVersion && context.technical.contractVersion.rulesJson);
+    const mergedVariables = mergeVerificationRequestVariables(rules.verificationRequestVariables || [], requestedVariables).verificationRequestVariables;
+    contractVersionForSchema = {
+      ...context.technical.contractVersion,
+      rulesJson: JSON.stringify({ ...rules, verificationRequestVariables: mergedVariables })
+    };
+  }
+  const inputSchema = buildVerificationInputContractSchema(contractVersionForSchema, context.plan);
+  const outputSchema = buildVerificationOutputContractSchema(contractVersionForSchema);
   return {
     success: true,
-    contractVersion: publicContractVersion(context.technical.contractVersion),
+    contractVersion: publicContractVersion(contractVersionForSchema),
     inputContract: inputSchema,
     inputChecksum: digestHex('sha256', Buffer.from(JSON.stringify(inputSchema, null, 2), 'utf8')),
     outputContract: outputSchema,
@@ -3142,17 +3263,40 @@ async function runExternalVerification(authToken, input = {}) {
     };
   }
   const rules = parseRulesJson(context.technical.contractVersion && context.technical.contractVersion.rulesJson);
+  const verificationRequestId = crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
   const params = resolveParamsObject(endpoint.paramsJson || input.paramsJson || '{}', {
     contractParams: normalizeContractParams(rules.contractParams || []),
     username: input.createdBy || '',
-    requestId: crypto.randomUUID ? crypto.randomUUID() : String(Date.now())
+    requestId: verificationRequestId
   });
   const contractParams = normalizeContractParams(rules.contractParams || []);
+  const requestVariableResolution = resolveVerificationRequestVariables(context.plan, rules.verificationRequestVariables || [], {
+    contractParams,
+    session: {
+      username: input.createdBy || '',
+      requestId: params.requestId || verificationRequestId
+    }
+  });
+  if (requestVariableResolution.issues.some((issue) => issue.level === 'error')) {
+    return {
+      success: false,
+      message: 'Verification request variables are not ready.',
+      endpoint,
+      inputContract: inputContract.contract,
+      outputContract: outputContract.contract,
+      items: requestVariableResolution.issues,
+      summary: {
+        errors: requestVariableResolution.issues.filter((item) => item.level === 'error').length,
+        warnings: requestVariableResolution.issues.filter((item) => item.level === 'warning').length,
+        infos: requestVariableResolution.issues.filter((item) => item.level === 'info').length
+      }
+    };
+  }
   const payload = buildVerificationPayload(context.plan, {
     code: inputContract.contract.code || '',
     version: inputContract.contract.version || '',
     schemaChecksum: inputContract.contract.schemaChecksum || ''
-  }, endpoint, params, contractParams);
+  }, endpoint, params, contractParams, requestVariableResolution.variables, requestVariableResolution.variableSources);
   const response = await postVerificationEndpoint(endpoint.endpointUrl, authToken, payload);
   const outputIssues = validateVerificationOutputByContract(response.json, outputContract.schema);
   const interpretation = interpretVerificationTables(response.json, parseResultInterpretationJson(endpoint.resultInterpretationJson || input.resultInterpretationJson || '{}'));
@@ -3578,6 +3722,8 @@ async function resolveContractVersionForEnrichment(authToken, input = {}) {
   const currentMappings = mappingSnapshot(input.aggregateClassMap || {}, input.aggregateAttributeMap || {}, input.attributeCatalog || {}, input.attributeListModes || {}, input.attributeSourceRules || {});
   const typeRules = input.typeRules || {};
   const currentContractParams = normalizeContractParams(input.contractParams || typeRules.contractParams || []);
+  const currentVerificationRequestVariables = normalizeVerificationRequestVariables(input.verificationRequestVariables || typeRules.verificationRequestVariables || []);
+  const currentVerificationBinding = normalizeVerificationBinding(input.verificationBinding || typeRules.verificationBinding || {});
   const versionsResult = await listConversionContractVersions(authToken);
   const allVersions = versionsResult.success ? versionsResult.data : [];
   let resolvedContract = {
@@ -3607,8 +3753,10 @@ async function resolveContractVersionForEnrichment(authToken, input = {}) {
   const mergedMappings = mergeKnownMappings(Array.isArray(latestRules.knownMappings) ? latestRules.knownMappings : [], currentMappings);
   const mergedRelationEndpointMappings = mergeRelationEndpointMappings(latestRules.relationEndpointMappings || {}, input.relationEndpointMappings || {});
   const mergedContractParams = mergeContractParams(latestRules.contractParams || [], currentContractParams);
+  const mergedVerificationRequestVariables = mergeVerificationRequestVariables(latestRules.verificationRequestVariables || [], currentVerificationRequestVariables);
+  const verificationBindingChanged = JSON.stringify(normalizeVerificationBinding(latestRules.verificationBinding || {})) !== JSON.stringify(currentVerificationBinding);
   const namespacesChanged = JSON.stringify(latestRules.shapeDataNamespaces || {}) !== JSON.stringify(SHAPE_DATA_NAMESPACES);
-  if (latest && merged.addedTypes.length === 0 && mergedAggregates.addedAggregates.length === 0 && mergedMappings.addedMappings.length === 0 && !mergedRelationEndpointMappings.changed && !mergedContractParams.changed && !namespacesChanged) {
+  if (latest && merged.addedTypes.length === 0 && mergedAggregates.addedAggregates.length === 0 && mergedMappings.addedMappings.length === 0 && !mergedRelationEndpointMappings.changed && !mergedContractParams.changed && !mergedVerificationRequestVariables.changed && !verificationBindingChanged && !namespacesChanged) {
     return {
       version: latest,
       action: 'reused',
@@ -3619,7 +3767,9 @@ async function resolveContractVersionForEnrichment(authToken, input = {}) {
       addedMappings: [],
       knownMappings: mergedMappings.knownMappings,
       relationEndpointMappings: mergedRelationEndpointMappings.relationEndpointMappings,
-      contractParams: mergedContractParams.contractParams
+      contractParams: mergedContractParams.contractParams,
+      verificationRequestVariables: mergedVerificationRequestVariables.verificationRequestVariables,
+      verificationBinding: currentVerificationBinding
     };
   }
   const versionNumber = nextVersionNumber(contractVersions);
@@ -3630,6 +3780,8 @@ async function resolveContractVersionForEnrichment(authToken, input = {}) {
     knownAggregates: mergedAggregates.knownAggregates,
     knownMappings: mergedMappings.knownMappings,
     contractParams: mergedContractParams.contractParams,
+    verificationRequestVariables: mergedVerificationRequestVariables.verificationRequestVariables,
+    verificationBinding: currentVerificationBinding,
     relationEndpointMappings: mergedRelationEndpointMappings.relationEndpointMappings
   };
   const created = await createConversionContractVersion(authToken, {
@@ -3654,6 +3806,8 @@ async function resolveContractVersionForEnrichment(authToken, input = {}) {
     addedMappings: latest ? mergedMappings.addedMappings : currentMappings,
     knownMappings: mergedMappings.knownMappings,
     contractParams: mergedContractParams.contractParams,
+    verificationRequestVariables: mergedVerificationRequestVariables.verificationRequestVariables,
+    verificationBinding: currentVerificationBinding,
     relationEndpointMappings: mergedRelationEndpointMappings.relationEndpointMappings
   };
 }
@@ -4200,8 +4354,6 @@ function renderBaaShell({ session, section }) {
       <div class="file-status" aria-label="Статус файла">
         <button class="primary" type="button" data-action="choose-shared-vsdx">Загрузить шаблон/схему</button>
         <button type="button" data-action="choose-checksum">Загрузить файл контрольной суммы</button>
-        <button type="button" data-action="save-contract">Сохранить контракт</button>
-        <button type="button" data-action="save-template">Сохранить шаблон</button>
         <span id="shared-file-status" class="file-name">Файл не выбран</span>
         <span id="checksum-status" class="checksum-status error">Контрольная сумма не проверялась</span>
         <span id="contract-version-status" class="file-name">Версия не выбрана</span>
@@ -4395,12 +4547,78 @@ function clientScript() {
       '<label>Суперкласс проекта<input id="schema-root" value="' + escapeHtml(schemaSettings.root) + '"></label>',
       '<label>Родительский суперкласс<select id="schema-parent"><option value="">Без родителя</option><option value="AA">AA</option></select></label>',
       '<label>Описание<input id="schema-description" value="' + escapeHtml(schemaSettings.description) + '"></label>',
-      '</div><p class="muted">Будут проверены и созданы классы BAA, BAAConversionContract, BAAConversionContractVersion, BAAVerificationInputContract, BAAVerificationOutputContract и BAAVerificationEndpoint.</p></section>',
-      '<section class="section"><h3>Результат</h3><pre id="status">Схема еще не проверялась.</pre></section>'
+      '</div><p class="muted">Проверяются суперкласс проекта и рабочие классы BAA. Технические имена классов настраиваются здесь, в рабочих меню они не выводятся.</p></section>',
+      '<section class="section"><h3>Результат проверки</h3><div id="schema-summary" class="notice">Схема еще не проверялась.</div><div id="schema-details"></div></section>',
+      '<pre id="status" style="display:none"></pre>'
     ].join('');
     var parentSelect = document.getElementById('schema-parent');
     if (parentSelect) parentSelect.value = schemaSettings.parent;
     loadSchemaParents();
+  }
+  function schemaItemStatusHtml(item) {
+    if (!item) return '<span class="checksum-status error">нет данных</span>';
+    if (item.created) return '<span class="checksum-status ok">создан</span>';
+    if (item.exists) return '<span class="checksum-status ok">есть</span>';
+    return '<span class="checksum-status error">нет</span>';
+  }
+  function schemaAttributeStatusText(attr) {
+    if (!attr) return 'нет данных';
+    if (attr.created) return 'создан';
+    if (attr.exists) return 'есть';
+    return 'нет';
+  }
+  function schemaClassRoleLabel(item) {
+    var name = item && item.name || '';
+    if (item && item.prototype) return 'суперкласс проекта';
+    if (name === 'BAAConversionContract') return 'контракт конвертации';
+    if (name === 'BAAConversionContractVersion') return 'версия контракта';
+    if (name === 'BAAVerificationInputContract') return 'input contract проверки';
+    if (name === 'BAAVerificationOutputContract') return 'output contract проверки';
+    if (name === 'BAAVerificationEndpoint') return 'endpoint проверки';
+    return 'класс';
+  }
+  function schemaSummaryText(schema) {
+    if (!schema) return 'Схема еще не проверялась.';
+    var summary = schema.summary || {};
+    if (schema.ready) return 'Схема готова: классов ' + (summary.classCount || 0) + ', атрибутов ' + (summary.attributeCount || 0) + '.';
+    if ((schema.errors || []).length) return 'Схема не готова: ошибок ' + (schema.errors || []).length + ', отсутствует ' + (schema.missing || []).length + '.';
+    if ((schema.conflicts || []).length) return 'Схема не готова: конфликтов ' + (schema.conflicts || []).length + '.';
+    if ((schema.missing || []).length) return 'Схема не готова: отсутствует ' + (schema.missing || []).length + ', можно создать по кнопке "Создать схему".';
+    return 'Схема не готова.';
+  }
+  function renderSchemaResult(payload) {
+    var schema = payload && payload.schema || payload;
+    var summaryTarget = document.getElementById('schema-summary');
+    var detailsTarget = document.getElementById('schema-details');
+    var statusTarget = document.getElementById('status');
+    if (statusTarget) statusTarget.textContent = JSON.stringify(payload || {}, null, 2);
+    if (!schema || !detailsTarget || !summaryTarget) return;
+    summaryTarget.className = schema.ready ? 'notice ok' : 'notice error';
+    summaryTarget.textContent = schemaSummaryText(schema);
+    var classRows = (schema.classes || []).map(function (item) {
+      var kind = schemaClassRoleLabel(item);
+      var attrCount = (item.attributes || []).length;
+      var missingAttrs = (item.attributes || []).filter(function (attr) { return !attr.exists; }).length;
+      var attrText = attrCount ? attrCount + (missingAttrs ? ' / нет ' + missingAttrs : '') : '0';
+      return '<tr><td>' + escapeHtml(kind) + '</td><td><strong>' + escapeHtml(item.name || '') + '</strong></td><td>' + escapeHtml(item.parent || 'без родителя') + '</td><td>' + schemaItemStatusHtml(item) + '</td><td>' + escapeHtml(attrText) + '</td></tr>';
+    }).join('');
+    var attrRows = [];
+    (schema.classes || []).forEach(function (item) {
+      (item.attributes || []).forEach(function (attr) {
+        attrRows.push('<tr><td><strong>' + escapeHtml(item.name || '') + '</strong></td><td>' + escapeHtml(attr.name || '') + '</td><td>' + escapeHtml(attr.description || '') + '</td><td>' + escapeHtml(attr.type || '') + '</td><td>' + escapeHtml(attr.mandatory ? 'да' : 'нет') + '</td><td>' + escapeHtml(schemaAttributeStatusText(attr)) + '</td></tr>');
+      });
+    });
+    var problems = []
+      .concat((schema.errors || []).map(function (item) { return { level: 'ошибка', text: item.message || item.name || JSON.stringify(item) }; }))
+      .concat((schema.conflicts || []).map(function (item) { return { level: 'конфликт', text: [item.type, item.name || item.className, item.field, 'ожидалось ' + item.expected, 'фактически ' + item.actual].filter(Boolean).join(' / ') }; }))
+      .concat((schema.missing || []).map(function (item) { return { level: 'нет', text: [item.type, item.className, item.name, item.parent ? 'родитель ' + item.parent : ''].filter(Boolean).join(' / ') }; }));
+    var problemRows = problems.map(function (item) {
+      return '<tr><td>' + escapeHtml(item.level) + '</td><td>' + escapeHtml(item.text) + '</td></tr>';
+    }).join('');
+    detailsTarget.innerHTML =
+      '<h4>Классы и суперклассы</h4><div class="table-wrap"><table class="type-table"><thead><tr><th>Тип</th><th>Имя</th><th>Родитель</th><th>Статус</th><th>Атрибуты</th></tr></thead><tbody>' + (classRows || '<tr><td colspan="5" class="muted">нет данных</td></tr>') + '</tbody></table></div>' +
+      '<details class="attribute-group"><summary><strong>Атрибуты классов</strong><span class="muted"> ' + escapeHtml(attrRows.length) + '</span></summary><div class="attribute-group-body"><div class="table-wrap"><table class="type-table"><thead><tr><th>Класс</th><th>Атрибут</th><th>Описание</th><th>Тип</th><th>Обязательный</th><th>Статус</th></tr></thead><tbody>' + (attrRows.join('') || '<tr><td colspan="6" class="muted">атрибутов нет</td></tr>') + '</tbody></table></div></div></details>' +
+      '<h4>Проблемы</h4><div class="table-wrap"><table class="type-table"><thead><tr><th>Уровень</th><th>Описание</th></tr></thead><tbody>' + (problemRows || '<tr><td colspan="2" class="muted">нет проблем</td></tr>') + '</tbody></table></div>';
   }
   function loadSchemaParents() {
     var select = document.getElementById('schema-parent');
@@ -4507,17 +4725,44 @@ function clientScript() {
       '</tbody></table></div>';
   }
   function verificationContractsWorkspaceHtml() {
-    var settings = readSettings();
     return [
-      '<section class="section"><div class="toolbar"><h3>Контракты верификации</h3><button type="button" data-action="generate-verification-contracts">Сформировать по готовым объектам</button><button class="primary" type="button" data-action="publish-verification-contracts">Опубликовать готовые объекты в CMDBuild</button></div>',
+      '<section class="section">',
       '<p class="muted">BAA формирует input/output contracts только по объектам плана, которые технически готовы к созданию: обязательные значения заполнены, а по объекту нет блокирующих ошибок. Логика проверки реализуется заранее в cmdbcustompages.</p>',
-      '<div class="grid">',
-      '<label>Версия verification contracts<input id="verification-contract-version" value="1"></label>',
-      '<label>Input class<input value="' + escapeHtml(settings.verificationInputContractClass) + '" disabled></label>',
-      '<label>Output class<input value="' + escapeHtml(settings.verificationOutputContractClass) + '" disabled></label>',
-      '</div><div id="verification-contract-status" class="notice">Контракты верификации еще не формировались.</div></section>',
-      '<section class="section"><div class="toolbar"><h3>Опубликованные input/output contracts</h3><button type="button" data-action="reload-verification-contracts">Обновить</button></div><div class="grid"><div><h4>Input contracts</h4><div id="verification-input-contracts-list" class="notice">Список еще не загружался.</div></div><div><h4>Output contracts</h4><div id="verification-output-contracts-list" class="notice">Список еще не загружался.</div></div></div></section>'
+      '<div id="verification-contract-actions"></div><div id="verification-contract-status" class="notice" style="display:none"></div></section>',
+      verificationRequestVariablesHtml(),
+      '<section class="section"><h3>Опубликованные input/output contracts</h3><div class="grid"><div><h4>Input contracts</h4><div id="verification-input-contracts-list" class="notice">Список еще не загружался.</div></div><div><h4>Output contracts</h4><div id="verification-output-contracts-list" class="notice">Список еще не загружался.</div></div></div></section>'
     ].join('');
+  }
+  function activeVerificationContractForCurrentVersion(items) {
+    var versionCode = currentPrepareContractVersionCode();
+    if (!versionCode) return null;
+    return (items || []).filter(function (item) {
+      return item.status === 'Active' && item.baaContractVersionCode === versionCode;
+    }).sort(function (left, right) {
+      return String(right.version || '').localeCompare(String(left.version || ''));
+    })[0] || null;
+  }
+  function currentVerificationPublication() {
+    var versionCode = currentPrepareContractVersionCode();
+    var input = activeVerificationContractForCurrentVersion(contractsState.verificationInputs);
+    var output = activeVerificationContractForCurrentVersion(contractsState.verificationOutputs);
+    return {
+      versionCode: versionCode,
+      input: input,
+      output: output,
+      ready: Boolean(versionCode && input && output)
+    };
+  }
+  function updateVerificationContractsWorkspaceState() {
+    var actions = document.getElementById('verification-contract-actions');
+    var status = document.getElementById('verification-contract-status');
+    if (!actions && !status) return;
+    var publication = currentVerificationPublication();
+    if (actions) {
+      actions.innerHTML = publication.ready
+        ? ''
+        : '<div class="grid contract-selector"><label>Версия verification contracts<input id="verification-contract-version" value="1"></label><div class="toolbar"><button type="button" data-action="generate-verification-contracts">Сформировать по готовым объектам</button><button class="primary" type="button" data-action="publish-verification-contracts">Опубликовать готовые объекты в CMDBuild</button></div></div>';
+    }
   }
   function verificationContractsTableHtml(items) {
     if (!items || !items.length) return '<div class="notice">Контракты еще не опубликованы.</div>';
@@ -4748,8 +4993,13 @@ function clientScript() {
   function updateVerificationContractSelects() {
     var inputSelect = document.getElementById('verification-input-contract');
     var outputSelect = document.getElementById('verification-output-contract');
+    var templateInputSelect = document.getElementById('template-verification-input-contract');
     if (inputSelect) inputSelect.innerHTML = verificationContractOptionsHtml(contractsState.verificationInputs);
     if (outputSelect) outputSelect.innerHTML = verificationContractOptionsHtml(contractsState.verificationOutputs);
+    if (templateInputSelect) {
+      templateInputSelect.innerHTML = verificationContractOptionsHtml(contractsState.verificationInputs);
+      selectVerificationContractByCodeVersion('template-verification-input-contract', prepareState.verificationBinding.inputContractCode || '', prepareState.verificationBinding.inputContractVersion || '');
+    }
   }
   function updateVerificationEndpointSelect() {
     var endpointSelect = document.getElementById('verification-endpoint-select');
@@ -4770,10 +5020,12 @@ function clientScript() {
       if (inputTarget) inputTarget.innerHTML = result.response.ok ? verificationContractsTableHtml(contractsState.verificationInputs) : '<div class="notice error">' + escapeHtml(result.json.message || 'Не удалось загрузить input contracts.') + '</div>';
       if (outputTarget) outputTarget.innerHTML = result.response.ok ? verificationContractsTableHtml(contractsState.verificationOutputs) : '<div class="notice error">' + escapeHtml(result.json.message || 'Не удалось загрузить output contracts.') + '</div>';
       updateVerificationContractSelects();
+      updateVerificationContractsWorkspaceState();
     }).catch(function (error) {
       var text = error && error.message ? error.message : String(error);
       if (inputTarget) inputTarget.innerHTML = '<div class="notice error">' + escapeHtml(text) + '</div>';
       if (outputTarget) outputTarget.innerHTML = '<div class="notice error">' + escapeHtml(text) + '</div>';
+      updateVerificationContractsWorkspaceState();
     });
   }
   function loadVerificationEndpoints() {
@@ -4805,7 +5057,6 @@ function clientScript() {
   function renderContracts() {
     app.innerHTML = [
       '<div class="toolbar"><button class="primary" type="button" data-action="create-contract">Создать контракт</button><button type="button" data-action="reload-contracts">Обновить</button></div>',
-      contractWorkspaceHtml(),
       '<section class="section"><h2>Контракты конвертации</h2><div class="grid">',
       '<label>Код контракта<input id="contract-code" value="default-contract"></label>',
       '<label>Название<input id="contract-name" value="Default contract"></label>',
@@ -4820,15 +5071,23 @@ function clientScript() {
     loadVerificationContracts();
     loadCmdbClassesForPrepare();
   }
+  function templateVerificationBindingHtml() {
+    var binding = prepareState.verificationBinding || {};
+    return '<div class="assignment-panel" data-panel="baa-endpoint"><h3>BAA endpoint</h3><div class="grid">' +
+      '<label class="check-label"><input id="template-verification-enabled" type="checkbox"' + (binding.enabled ? ' checked' : '') + '>Использовать шаблон для внешней проверки</label>' +
+      '<label>Контракт проверки<select id="template-verification-input-contract">' + verificationContractOptionsHtml(contractsState.verificationInputs) + '</select></label>' +
+      '</div><div class="toolbar compact-toolbar"><button class="primary" type="button" data-action="save-baa-template">Сохранить</button></div><p class="muted">Сохраняет выбранный endpoint в правила BAA и записывает новую версию в VSDX.</p></div>';
+  }
   function renderPrepare() {
     function tabButton(tab, label) {
       return '<button' + (prepareState.activeTab === tab ? ' class="active"' : '') + ' type="button" data-action="prepare-tab" data-tab="' + tab + '">' + label + '</button>';
     }
     app.innerHTML = [
-      '<section class="section"><div class="toolbar"><div class="tabs">' + tabButton('types', 'Типы') + tabButton('shapes', 'Фигуры') + tabButton('enrich', 'Обогатить') + tabButton('relation-map', 'Отразить на связь') + tabButton('contract-params', 'Параметры контракта') + '</div></div><div id="prepare-view" class="notice">Загрузите .vsdx для извлечения типов фигур.</div></section>'
+      '<section class="section"><div class="toolbar"><button type="button" data-action="check-session">Проверить сессию</button></div>' + templateVerificationBindingHtml() + '<div class="toolbar"><div class="tabs">' + tabButton('types', 'Тип') + tabButton('shapes', 'Фигуры') + tabButton('contract-bind', 'Привязать контракт') + tabButton('enrich', 'Обогатить') + tabButton('relation-map', 'Отразить на связь') + tabButton('contract-params', 'Параметры контракта') + '</div></div><div id="prepare-view" class="notice">Загрузите .vsdx для извлечения типов фигур.</div></section>'
     ].join('');
     updatePrepareContractVersionSummary();
     loadContracts().then(loadContractVersions);
+    loadVerificationContracts();
     loadCmdbClassesForPrepare();
     renderChecksumStatus(prepareState.checksum);
     renderPrepareData();
@@ -4856,30 +5115,18 @@ function clientScript() {
       '</div></details>';
   }
   function renderPrepareVerification() {
-    var settings = readSettings();
     app.innerHTML = [
-      '<div class="toolbar"><button class="primary" type="button" data-action="save-verification-endpoint">Сохранить endpoint</button><button type="button" data-action="reload-verification-endpoints">Обновить endpoint</button><button type="button" data-action="check-session">Проверить сессию</button></div>',
-      '<section class="section"><h2>Подготовить правила верификации</h2><p class="muted">Здесь сохраняются endpoint definition, input/output contracts, параметры вызова и правило интерпретации найденных данных.</p></section>',
+      '<div class="toolbar"><button type="button" data-action="reload-verification-contracts">Обновить контракты проверки</button><button type="button" data-action="check-session">Проверить сессию</button></div>',
+      '<section class="section"><h2>Подготовить правила верификации</h2><p class="muted">Здесь формируются и публикуются input/output contracts для внешней проверки. Привязка шаблона к проверке задается только в меню "Подготовить шаблон" в блоке "Внешняя проверка шаблона": включите галку, выберите контракт проверки и нажмите "Сохранить шаблон".</p></section>',
       verificationContractsWorkspaceHtml(),
-      '<section class="section"><h3>Endpoint cmdbcustompages</h3><div class="grid">',
-      '<label>Сохраненный endpoint<select id="verification-endpoint-select">' + verificationEndpointOptionsHtml(contractsState.verificationEndpoints) + '</select></label>',
-      '<label>Код endpoint<input id="verification-endpoint-code" value="default-verification"></label>',
-      '<label>URL endpoint<input id="verification-endpoint-url" placeholder="/cmdbuild/custompage/api/verify"></label>',
-      '<label>Input contract<select id="verification-input-contract">' + verificationContractOptionsHtml(contractsState.verificationInputs) + '</select></label>',
-      '<label>Output contract<select id="verification-output-contract">' + verificationContractOptionsHtml(contractsState.verificationOutputs) + '</select></label>',
-      '<label>Статус endpoint<select id="verification-endpoint-status"><option value="Active" selected>Active</option><option value="Draft">Draft</option><option value="Archived">Archived</option></select></label>',
-      '<label>Endpoint class<input value="' + escapeHtml(settings.verificationEndpointClass) + '" disabled></label>',
-      '</div><label>Params JSON<textarea id="verification-params-json" rows="5">{}</textarea></label><p class="muted">Параметры поддерживают $' + '{contractparam.name}, $' + '{session.username}, $' + '{session.requestId}.</p>',
-      verificationInterpretationControlsHtml() + '<div id="verification-endpoints-list" class="notice">Endpoint definitions еще не загружались.</div></section>',
-      '<section class="section"><h3>Статус</h3><div id="status" class="notice">Правила верификации еще не сохранялись.</div></section>'
+      '<section class="section"><h3>Статус</h3><div id="status" class="notice">Контракты проверки еще не формировались.</div></section>'
     ].join('');
     loadVerificationContracts();
-    loadVerificationEndpoints();
   }
   function renderVerify() {
     app.innerHTML = [
       '<div class="toolbar"><button class="primary" type="button" data-action="run-external-verification">Отправить готовые объекты на верификацию</button><button type="button" data-action="check-session">Проверить сессию</button></div>',
-      '<section class="section"><h2>Верификация</h2><p class="muted">Используется общий загруженный файл: ' + escapeHtml(prepareState.fileName || 'файл не выбран') + '.</p><p class="muted">Endpoint, contracts и интерпретация настраиваются в меню "Подготовить правила верификации".</p><div class="grid">',
+      '<section class="section"><h2>Верификация</h2><p class="muted">Используется общий загруженный файл: ' + escapeHtml(prepareState.fileName || 'файл не выбран') + '.</p><p class="muted">Привязка шаблона к внешней проверке задается в "Подготовить шаблон". Здесь выбирается опубликованный Active endpoint выполнения проверки.</p><div class="grid">',
       '<label>Сохраненный endpoint<select id="verification-endpoint-select">' + verificationEndpointOptionsHtml(contractsState.verificationEndpoints) + '</select></label>',
       '</div></section>',
       '<div id="status" class="notice">Верификация еще не запускалась.</div>'
@@ -4903,6 +5150,7 @@ function clientScript() {
     app.innerHTML = [
       '<div class="toolbar"><button class="primary" type="button" data-action="' + mainAction + '">' + escapeHtml(mainButton) + '</button><button type="button" data-action="fill-create-contract">Дозаполнить через контракт</button><button type="button" data-action="fill-create-manual">Дозаполнить руками</button><button type="button" data-action="rebuild-create-plan">Перестроить план</button><button type="button" data-action="check-session">Проверить сессию</button></div>',
       '<section class="section"><h2>Подготовить объекты</h2><p class="muted">' + escapeHtml(fileLine) + '</p><p class="muted">Сначала строится план. Недостающие обязательные значения можно дозаполнить ниже, перестроить план и затем перейти к созданию объектов.</p></section>',
+      '<section class="section"><div class="toolbar"><button type="button" data-action="save-contract">Сохранить правила дозаполнения BAA</button></div><p class="muted">Эта кнопка сохраняет только правила дозаполнения классов в новую версию BAA-контракта. Файл VSDX фиксируется отдельно в меню "Подготовить шаблон".</p></section>',
       '<section class="section"><h3>Результат</h3><div id="status" class="notice">План еще не строился.</div></section>'
     ].join('');
     if (createState.lastResult) showCreateResult(createState.lastResult, createState.lastOk);
@@ -5062,6 +5310,11 @@ function clientScript() {
       var objectIndex = String((plan.objects || []).indexOf(object));
       if (filterPlanIndex && objectIndex !== filterPlanIndex) return;
       if (filterClass && object.className !== filterClass) return;
+      Object.keys(object.payload || {}).forEach(function (attrName) {
+        if (!object.className || !attrName) return;
+        var classExpression = '$' + '{class.' + object.className + '.' + attrName + '}';
+        pushExpressionSuggestion(items, seen, classExpression, 'class ' + object.className + '.' + attrName, classExpression, object.className || '', attrName);
+      });
       (object.attributeSources || []).forEach(function (source) {
         var targetAttribute = source.targetAttribute || '';
         if (!constructorMode && filterAttribute && targetAttribute !== filterAttribute) return;
@@ -5090,6 +5343,8 @@ function clientScript() {
         pushExpressionSuggestion(items, seen, contractExpression, 'contract: ' + param.name, contractExpression);
       }
     });
+    pushExpressionSuggestion(items, seen, '$' + '{session.username}', 'session: username', '$' + '{session.username}');
+    pushExpressionSuggestion(items, seen, '$' + '{session.requestId}', 'session: requestId', '$' + '{session.requestId}');
     return items.sort(function (left, right) { return left.value.localeCompare(right.value); });
   }
   function closeExpressionSuggestions() {
@@ -5449,6 +5704,12 @@ function clientScript() {
     attributeSourceRules: {},
     relationEndpointMappings: {},
     contractParams: [],
+    verificationRequestVariables: [],
+    verificationBinding: {
+      enabled: false,
+      inputContractCode: '',
+      inputContractVersion: ''
+    },
     contractRulesAppliedVersionCode: '',
     selectedRelationKey: '',
     attributeColumns: {
@@ -5509,6 +5770,8 @@ function clientScript() {
         attributeSourceRules: prepareState.attributeSourceRules,
         relationEndpointMappings: prepareState.relationEndpointMappings,
         contractParams: prepareState.contractParams,
+        verificationRequestVariables: prepareState.verificationRequestVariables,
+        verificationBinding: prepareState.verificationBinding,
         contractRulesAppliedVersionCode: prepareState.contractRulesAppliedVersionCode,
         selectedRelationKey: prepareState.selectedRelationKey,
         attributeColumns: prepareState.attributeColumns,
@@ -5567,6 +5830,8 @@ function clientScript() {
       prepareState.attributeSourceRules = stored.attributeSourceRules || {};
       prepareState.relationEndpointMappings = stored.relationEndpointMappings || {};
       prepareState.contractParams = Array.isArray(stored.contractParams) ? stored.contractParams : [];
+      prepareState.verificationRequestVariables = Array.isArray(stored.verificationRequestVariables) ? stored.verificationRequestVariables : [];
+      prepareState.verificationBinding = Object.assign({}, prepareState.verificationBinding, stored.verificationBinding || {});
       prepareState.contractRulesAppliedVersionCode = stored.contractRulesAppliedVersionCode || '';
       prepareState.selectedRelationKey = stored.selectedRelationKey || '';
       prepareState.attributeColumns = Object.assign({}, prepareState.attributeColumns, stored.attributeColumns || {});
@@ -5714,6 +5979,14 @@ function clientScript() {
       prepareState.relationEndpointMappings = rules.relationEndpointMappings;
     }
     if (Array.isArray(rules.contractParams)) prepareState.contractParams = rules.contractParams;
+    if (Array.isArray(rules.verificationRequestVariables)) prepareState.verificationRequestVariables = rules.verificationRequestVariables;
+    if (rules.verificationBinding && typeof rules.verificationBinding === 'object' && !Array.isArray(rules.verificationBinding)) {
+      prepareState.verificationBinding = Object.assign({}, prepareState.verificationBinding, {
+        enabled: Boolean(rules.verificationBinding.enabled),
+        inputContractCode: String(rules.verificationBinding.inputContractCode || ''),
+        inputContractVersion: String(rules.verificationBinding.inputContractVersion || '')
+      });
+    }
     prepareState.contractRulesAppliedVersionCode = versionCode;
     persistPrepareState();
     return true;
@@ -6132,6 +6405,39 @@ function clientScript() {
   function contractParamsHtml() {
     return '<section class="section"><div class="toolbar compact-toolbar"><h3>Параметры контракта</h3><button class="primary" type="button" data-action="apply-contract-params">Применить</button><button type="button" data-action="add-contract-param">Добавить параметр</button><span id="contract-params-status" class="muted"></span></div><p class="muted">Параметры уровня контракта сохраняются в версии контракта и позже будут доступны в выражениях вида \${contractparam.name}.</p>' + contractParamRowsHtml() + '</section>';
   }
+  function verificationRequestVariableRowsHtml() {
+    var variables = prepareState.verificationRequestVariables || [];
+    if (!variables.length) return '<div class="notice">Переменные отправки еще не заданы.</div>';
+    return '<div class="table-wrap"><table class="type-table"><thead><tr><th>Имя</th><th>Описание</th><th>Тип</th><th>Обяз.</th><th>Источник</th><th>Выражение/путь</th><th>По умолчанию</th><th></th></tr></thead><tbody>' + variables.map(function (variable, index) {
+      var sourceKind = String(variable.sourceKind || 'expression');
+      var sourceKinds = [
+        ['expression', 'выражение'],
+        ['class', 'класс.атрибут'],
+        ['contractparam', 'параметр контракта'],
+        ['session', 'параметр сессии'],
+        ['constant', 'константа']
+      ];
+      var typeOptions = ['string', 'text', 'integer', 'decimal', 'boolean', 'date', 'datetime', 'object', 'array'].map(function (type) {
+        return '<option value="' + escapeHtml(type) + '"' + (String(variable.type || 'string') === type ? ' selected' : '') + '>' + escapeHtml(type) + '</option>';
+      }).join('');
+      var sourceOptions = sourceKinds.map(function (item) {
+        return '<option value="' + escapeHtml(item[0]) + '"' + (sourceKind === item[0] ? ' selected' : '') + '>' + escapeHtml(item[1]) + '</option>';
+      }).join('');
+      return '<tr>' +
+        '<td><input data-verification-request-variable-field="name" data-index="' + escapeHtml(index) + '" value="' + escapeHtml(variable.name || '') + '" placeholder="checkScope"></td>' +
+        '<td><input data-verification-request-variable-field="description" data-index="' + escapeHtml(index) + '" value="' + escapeHtml(variable.description || '') + '"></td>' +
+        '<td><select data-verification-request-variable-field="type" data-index="' + escapeHtml(index) + '">' + typeOptions + '</select></td>' +
+        '<td><input type="checkbox" data-verification-request-variable-field="mandatory" data-index="' + escapeHtml(index) + '"' + (variable.mandatory ? ' checked' : '') + '></td>' +
+        '<td><select data-verification-request-variable-field="sourceKind" data-index="' + escapeHtml(index) + '">' + sourceOptions + '</select></td>' +
+        '<td><input data-verification-request-variable-field="sourceExpression" data-index="' + escapeHtml(index) + '" data-expression-class="" data-expression-attribute="" value="' + escapeHtml(variable.sourceExpression || '') + '" placeholder="' + escapeHtml('$' + '{contractparam.name} или class.Server.Code') + '"></td>' +
+        '<td><input data-verification-request-variable-field="defaultValue" data-index="' + escapeHtml(index) + '" value="' + escapeHtml(variable.defaultValue || '') + '"></td>' +
+        '<td><button type="button" data-action="remove-verification-request-variable" data-index="' + escapeHtml(index) + '">Очистить</button></td>' +
+      '</tr>';
+    }).join('') + '</tbody></table></div>';
+  }
+  function verificationRequestVariablesHtml() {
+    return '<section class="section"><div class="toolbar compact-toolbar"><h3>Переменные отправки</h3><button class="primary" type="button" data-action="apply-verification-request-variables">Применить</button><button type="button" data-action="add-verification-request-variable">Добавить переменную</button><span id="verification-request-variables-status" class="muted"></span></div><p class="muted">Эти значения будут отправлены во внешний валидатор вместе с готовыми объектами. Источники: \${contractparam.name}, \${session.username}, \${session.requestId}, выражения Visio и class.ClassName.Attribute.</p>' + verificationRequestVariableRowsHtml() + '</section>';
+  }
   function prepareRelationMappingHtml() {
     var connectors = connectorAggregatesForMapping();
     if (!connectors.length) return '<div class="notice">Связи в шаблоне не найдены.</div>';
@@ -6432,6 +6738,11 @@ function clientScript() {
     var target = document.getElementById('prepare-view');
     if (!target) return;
     var types = prepareState.types || [];
+    if (prepareState.activeTab === 'contract-bind') {
+      target.className = '';
+      target.innerHTML = checksumWarningHtml() + contractWorkspaceHtml();
+      return;
+    }
     if (!types.length) {
       target.className = 'notice';
       target.textContent = 'Загрузите .vsdx для извлечения типов фигур.';
@@ -6570,6 +6881,68 @@ function clientScript() {
     return (prepareState.contractParams || []).map(normalizeUiContractParam).filter(Boolean).sort(function (left, right) {
       return left.name.localeCompare(right.name);
     });
+  }
+  function normalizeUiVerificationRequestVariable(variable) {
+    var name = String(variable && variable.name || '').trim();
+    if (!name) return null;
+    var sourceKind = String(variable.sourceKind || 'expression').trim() || 'expression';
+    if (['expression', 'class', 'contractparam', 'session', 'constant'].indexOf(sourceKind) === -1) sourceKind = 'expression';
+    return {
+      name: name,
+      description: String(variable.description || name).trim() || name,
+      type: String(variable.type || 'string').trim() || 'string',
+      mandatory: Boolean(variable.mandatory),
+      sourceKind: sourceKind,
+      sourceExpression: String(variable.sourceExpression || '').trim(),
+      defaultValue: String(variable.defaultValue || '')
+    };
+  }
+  function normalizedUiVerificationRequestVariables() {
+    return (prepareState.verificationRequestVariables || []).map(normalizeUiVerificationRequestVariable).filter(Boolean).sort(function (left, right) {
+      return left.name.localeCompare(right.name);
+    });
+  }
+  function syncContractParamsFromDom() {
+    var inputs = document.querySelectorAll('[data-contract-param-field]');
+    if (!inputs || !inputs.length) return;
+    var params = (prepareState.contractParams || []).slice();
+    Array.prototype.forEach.call(inputs, function (input) {
+      var paramField = input.getAttribute('data-contract-param-field') || '';
+      var paramIndex = Number.parseInt(input.getAttribute('data-index') || '0', 10);
+      while (params.length <= paramIndex) params.push({ name: '', description: '', type: 'string', required: false, defaultValue: '', listMode: 'none', values: [], help: '' });
+      var currentParam = Object.assign({}, params[paramIndex] || {});
+      if (paramField === 'required') currentParam.required = Boolean(input.checked);
+      else if (paramField === 'valuesText') currentParam.values = String(input.value || '').split(/[;\\n,]/).map(function (item) { return item.trim(); }).filter(Boolean);
+      else currentParam[paramField] = input.value || '';
+      params[paramIndex] = currentParam;
+    });
+    prepareState.contractParams = params;
+  }
+  function syncVerificationRequestVariablesFromDom() {
+    var inputs = document.querySelectorAll('[data-verification-request-variable-field]');
+    if (!inputs || !inputs.length) return;
+    var variables = (prepareState.verificationRequestVariables || []).slice();
+    Array.prototype.forEach.call(inputs, function (input) {
+      var field = input.getAttribute('data-verification-request-variable-field') || '';
+      var index = Number.parseInt(input.getAttribute('data-index') || '0', 10);
+      while (variables.length <= index) variables.push({ name: '', description: '', type: 'string', mandatory: false, sourceKind: 'expression', sourceExpression: '', defaultValue: '' });
+      var current = Object.assign({}, variables[index] || {});
+      if (field === 'mandatory') current.mandatory = Boolean(input.checked);
+      else current[field] = input.value || '';
+      variables[index] = current;
+    });
+    prepareState.verificationRequestVariables = variables;
+  }
+  function syncVerificationBindingFromDom() {
+    var enabled = document.getElementById('template-verification-enabled');
+    var inputSelect = document.getElementById('template-verification-input-contract');
+    if (!enabled && !inputSelect) return;
+    var option = inputSelect && inputSelect.options[inputSelect.selectedIndex];
+    prepareState.verificationBinding = {
+      enabled: Boolean(enabled && enabled.checked),
+      inputContractCode: option && option.getAttribute('data-code') || '',
+      inputContractVersion: option && option.getAttribute('data-version') || ''
+    };
   }
   function isVsdxFile(file) {
     var name = file && file.name ? String(file.name).toLowerCase() : '';
@@ -6751,6 +7124,9 @@ function clientScript() {
     target.textContent = typeof message === 'string' ? message : JSON.stringify(message, null, 2);
   }
   function enrichmentPayload(base64, file, contractOnly) {
+    syncContractParamsFromDom();
+    syncVerificationRequestVariablesFromDom();
+    syncVerificationBindingFromDom();
     return {
       filename: prepareState.fileName || file && file.name || 'template.vsdx',
       fileBase64: base64,
@@ -6763,6 +7139,8 @@ function clientScript() {
       aggregateAttributeSourceRules: prepareState.attributeSourceRules || {},
       relationEndpointMappings: prepareState.relationEndpointMappings || {},
       contractParams: normalizedUiContractParams(),
+      verificationRequestVariables: normalizedUiVerificationRequestVariables(),
+      verificationBinding: prepareState.verificationBinding || {},
       cmdbClassAttributes: prepareState.cmdbClassAttributes || {},
       settings: readSettings(),
       checksumFilename: prepareState.checksumFileName || '',
@@ -6772,15 +7150,17 @@ function clientScript() {
       preparedBy: boot.session && boot.session.username || ''
     };
   }
-  function savePrepareContractOnly() {
+  function savePrepareContractOnly(options) {
+    options = options || {};
     syncVisibleAttributeAssignmentsFromDom();
+    syncContractParamsFromDom();
     syncPrepareDecomposeFromRules();
     var file = selectedFile();
     if (!file && !prepareState.fileBase64) {
       renderNotice('Выберите .vsdx файл.', false);
-      return;
+      return Promise.resolve(null);
     }
-    renderNotice('Сохраняю контракт...', null);
+    if (!options.quiet) renderNotice('Сохраняю BAA-правила...', null);
     return (prepareState.fileBase64 ? Promise.resolve(prepareState.fileBase64) : fileToBase64(file).then(function (base64) {
       prepareState.fileBase64 = base64;
       return base64;
@@ -6796,32 +7176,39 @@ function clientScript() {
     }).then(function (result) {
       if (!result.response.ok) {
         renderNotice(result.json, false);
-        return;
+        return result;
       }
       prepareState.contractVersionId = result.json.contractVersion && result.json.contractVersion.id || prepareState.contractVersionId;
       prepareState.contractVersionCode = result.json.contractVersion && result.json.contractVersion.code || prepareState.contractVersionCode;
+      if (Array.isArray(result.json.verificationRequestVariables)) prepareState.verificationRequestVariables = result.json.verificationRequestVariables;
+      if (result.json.verificationBinding) prepareState.verificationBinding = result.json.verificationBinding;
       loadContractVersions();
+      loadVerificationContracts();
       persistPrepareState();
       updatePrepareContractVersionSummary();
-      renderNotice('Контракт сохранен. Версия: ' + (result.json.contractVersion && result.json.contractVersion.code || '') + '. VSDX еще ссылается на старую версию: нажмите "Сохранить шаблон", чтобы записать новую версию в файл.', true);
+      if (!options.quiet) renderNotice('BAA-правила сохранены. Версия: ' + (result.json.contractVersion && result.json.contractVersion.code || '') + '. Чтобы файл ссылался на нее, нажмите "Сохранить шаблон".', true);
+      return result;
     }).catch(function (error) {
       renderNotice(error && error.message ? error.message : String(error), false);
+      return null;
     });
   }
-  function enrichVsdx() {
+  function enrichVsdx(options) {
+    options = options || {};
     syncVisibleAttributeAssignmentsFromDom();
+    syncContractParamsFromDom();
     syncPrepareDecomposeFromRules();
     var file = selectedFile();
     if (!file && !prepareState.fileBase64) {
       renderNotice('Выберите .vsdx файл.', false);
-      return;
+      return Promise.resolve(null);
     }
     if (!prepareState.contractAnchorKey) {
       renderNotice('Выберите объект контракта в блоке "Привязка контракта к объекту".', false);
-      return;
+      return Promise.resolve(null);
     }
-    renderNotice('Обогащаю VSDX...', null);
-    (prepareState.fileBase64 ? Promise.resolve(prepareState.fileBase64) : fileToBase64(file).then(function (base64) {
+    if (!options.quiet) renderNotice('Сохраняю VSDX...', null);
+    return (prepareState.fileBase64 ? Promise.resolve(prepareState.fileBase64) : fileToBase64(file).then(function (base64) {
       prepareState.fileBase64 = base64;
       return base64;
     })).then(function (base64) {
@@ -6836,7 +7223,7 @@ function clientScript() {
     }).then(function (result) {
       if (!result.response.ok) {
         renderNotice(result.json, false);
-        return;
+        return result;
       }
       var binary = atob(result.json.fileBase64 || '');
       var bytes = new Uint8Array(binary.length);
@@ -6855,15 +7242,36 @@ function clientScript() {
       }
       prepareState.contractVersionId = result.json.contractVersion && result.json.contractVersion.id || prepareState.contractVersionId;
       prepareState.contractVersionCode = result.json.contractVersion && result.json.contractVersion.code || prepareState.contractVersionCode;
+      if (Array.isArray(result.json.verificationRequestVariables)) prepareState.verificationRequestVariables = result.json.verificationRequestVariables;
+      if (result.json.verificationBinding) prepareState.verificationBinding = result.json.verificationBinding;
       if (result.json.fixedMetadata) {
         prepareState.contractMetadata = Object.assign({}, prepareState.contractMetadata || {}, result.json.fixedMetadata);
       }
       loadContractVersions();
+      loadVerificationContracts();
       persistPrepareState();
       updatePrepareContractVersionSummary();
-      renderNotice('Контракт сохранен, VSDX и файл контрольной суммы загружены. Версия: ' + (result.json.contractVersion && result.json.contractVersion.code || ''), true);
+      if (!options.quiet) renderNotice('VSDX и файл контрольной суммы загружены. Версия: ' + (result.json.contractVersion && result.json.contractVersion.code || ''), true);
+      return result;
     }).catch(function (error) {
       renderNotice(error && error.message ? error.message : String(error), false);
+      return null;
+    });
+  }
+  function saveBaaTemplate() {
+    renderNotice('Сохраняю шаблон...', null);
+    return savePrepareContractOnly({ quiet: true }).then(function (contractResult) {
+      if (!contractResult || !contractResult.response || !contractResult.response.ok) return contractResult;
+      return enrichVsdx({ quiet: true });
+    }).then(function (templateResult) {
+      if (templateResult && templateResult.response && templateResult.response.ok) {
+        loadVerificationContracts();
+        renderNotice('Шаблон сохранен: BAA-правила записаны в CMDBuild, VSDX и контрольная сумма загружены. Версия: ' + (templateResult.json.contractVersion && templateResult.json.contractVersion.code || prepareState.contractVersionCode || 'не определена'), true);
+      }
+      return templateResult;
+    }).catch(function (error) {
+      renderNotice(error && error.message ? error.message : String(error), false);
+      return null;
     });
   }
   function verifyVsdxFile(file) {
@@ -7082,12 +7490,14 @@ function clientScript() {
   }
   function verificationBasePayload(extra) {
     syncCreateFileFromPrepare();
+    syncVerificationRequestVariablesFromDom();
     return Object.assign({
       filename: createState.fileName || prepareState.fileName || 'template.vsdx',
       fileBase64: createState.fileBase64 || prepareState.fileBase64 || '',
       contractVersionId: prepareState.contractVersionId || '',
       contractVersionCode: currentPrepareContractVersionCode(),
       valueOverrides: createState.valueOverrides || {},
+      verificationRequestVariables: normalizedUiVerificationRequestVariables(),
       settings: readSettings(),
       createdBy: boot.session && boot.session.username || ''
     }, extra || {});
@@ -7095,9 +7505,11 @@ function clientScript() {
   function showVerificationContractStatus(value, ok) {
     var target = document.getElementById('verification-contract-status');
     if (!target) return;
+    target.style.display = '';
     target.className = ok === false ? 'notice error' : ok === true ? 'notice ok' : 'notice';
     if (!value || typeof value !== 'object') {
       target.textContent = String(value || '');
+      updateVerificationContractsWorkspaceState();
       return;
     }
     var inputContract = value.inputContract || value.generated && value.generated.inputContract || {};
@@ -7115,6 +7527,9 @@ function clientScript() {
         : '';
       return '<tr><td><strong>' + escapeHtml(item.name || '') + '</strong></td><td>' + escapeHtml(item.description || '') + '</td><td>' + escapeHtml(item.type || '') + '</td><td>' + escapeHtml(item.required ? 'да' : 'нет') + '</td><td>' + escapeHtml(item.defaultValue || '') + '</td><td>' + escapeHtml(listText) + '</td></tr>';
     }).join('');
+    var requestVariableRows = (inputContract.requestVariables || []).map(function (item) {
+      return '<tr><td><strong>' + escapeHtml(item.name || '') + '</strong></td><td>' + escapeHtml(item.description || '') + '</td><td>' + escapeHtml(item.type || '') + '</td><td>' + escapeHtml(item.mandatory ? 'да' : 'нет') + '</td><td>' + escapeHtml(item.sourceKind || '') + '</td><td class="type-key">' + escapeHtml(item.sourceExpression || item.defaultValue || '') + '</td></tr>';
+    }).join('');
     var excluded = summary.excludedObjects ? '<span class="muted"> / исключено: ' + escapeHtml(summary.excludedObjects) + '</span>' : '';
     var publishLine = value.input || value.output
       ? '<div class="notice ok">Опубликовано: input ' + escapeHtml(value.input && value.input.data && value.input.data.code || '') + ' / output ' + escapeHtml(value.output && value.output.data && value.output.data.code || '') + '</div>'
@@ -7122,15 +7537,20 @@ function clientScript() {
     target.innerHTML = publishLine +
       '<div class="toolbar compact-toolbar"><strong>' + escapeHtml(ok === false ? 'Контракты не сформированы' : 'Контракты по готовым объектам') + '</strong><span class="muted"> объектов: ' + escapeHtml(summary.objects || 0) + ' / классов: ' + escapeHtml(summary.classes || 0) + ' / связей: ' + escapeHtml(summary.relations || 0) + excluded + '</span></div>' +
       '<h4>Переменные контракта</h4><div class="table-wrap"><table class="type-table"><thead><tr><th>Имя</th><th>Описание</th><th>Тип</th><th>Обязательный</th><th>По умолчанию</th><th>Список</th></tr></thead><tbody>' + (paramRows || '<tr><td colspan="6" class="muted">переменные контракта не заданы</td></tr>') + '</tbody></table></div>' +
+      '<h4>Переменные отправки</h4><div class="table-wrap"><table class="type-table"><thead><tr><th>Имя</th><th>Описание</th><th>Тип</th><th>Обязательный</th><th>Источник</th><th>Выражение</th></tr></thead><tbody>' + (requestVariableRows || '<tr><td colspan="6" class="muted">переменные отправки не заданы</td></tr>') + '</tbody></table></div>' +
       '<h4>Классы input contract</h4><div class="table-wrap"><table class="type-table"><thead><tr><th>Класс</th><th>Атрибутов</th><th>Атрибуты</th></tr></thead><tbody>' + (classRows || '<tr><td colspan="3" class="muted">нет готовых классов</td></tr>') + '</tbody></table></div>' +
       '<h4>Связи input contract</h4><div class="table-wrap"><table class="type-table"><thead><tr><th>Класс связи</th><th>Source</th><th>Destination</th><th>Статус</th></tr></thead><tbody>' + (relationRows || '<tr><td colspan="4" class="muted">нет готовых связей</td></tr>') + '</tbody></table></div>' +
       '<details><summary>Техническая часть</summary><pre>' + escapeHtml(JSON.stringify(value, null, 2)) + '</pre></details>';
+    updateVerificationContractsWorkspaceState();
   }
   function generateVerificationContracts() {
     if (!prepareState.fileBase64 && !createState.fileBase64) {
       showVerificationContractStatus('Сначала загрузите VSDX и подготовьте план.', false);
       return;
     }
+    syncVerificationRequestVariablesFromDom();
+    prepareState.verificationRequestVariables = normalizedUiVerificationRequestVariables();
+    persistPrepareState();
     showVerificationContractStatus('Формирую input/output contracts по готовым объектам...', null);
     api('/verification/contracts/generate', {
       method: 'POST',
@@ -7147,6 +7567,9 @@ function clientScript() {
       showVerificationContractStatus('Сначала загрузите VSDX и подготовьте план.', false);
       return;
     }
+    syncVerificationRequestVariablesFromDom();
+    prepareState.verificationRequestVariables = normalizedUiVerificationRequestVariables();
+    persistPrepareState();
     showVerificationContractStatus('Публикую input/output contracts по готовым объектам в CMDBuild...', null);
     api('/verification/contracts/publish', {
       method: 'POST',
@@ -7341,8 +7764,75 @@ function clientScript() {
       '<div><strong>Output contract</strong><div class="type-key">' + escapeHtml([outputContract.code, outputContract.version].filter(Boolean).join(' / ')) + '</div></div></div>' +
       interpretationLine + verificationIssueRowsHtml(value.items || []) + verificationResultTablesHtml(value);
   }
+  function syncGlobalActionsForSection() {
+    return;
+  }
+  function removeLegacySaveButtonsForSection(section) {
+    var root = document.body || app;
+    var buttons = root ? root.querySelectorAll('button') : [];
+    var saveButtons = [];
+    if (!buttons || !buttons.length) return;
+    var panels = root.querySelectorAll ? root.querySelectorAll('.assignment-panel') : [];
+    Array.prototype.forEach.call(panels || [], function (panel) {
+      var title = panel.querySelector('h3');
+      if (!title || (title.textContent || '').trim().toLowerCase() !== 'baa endpoint') return;
+      var endpointButtons = panel.querySelectorAll('button');
+      var saveKept = false;
+      Array.prototype.forEach.call(endpointButtons || [], function (button) {
+        var text = (button.textContent || '').trim().toLowerCase();
+        var action = button.getAttribute('data-action') || '';
+        if (!saveKept && action === 'save-baa-template' && text.indexOf('сохран') !== -1) {
+          saveKept = true;
+          return;
+        }
+        button.remove();
+      });
+    });
+    Array.prototype.forEach.call(buttons, function (button) {
+      if (!button.isConnected) return;
+      var action = button.getAttribute('data-action') || '';
+      var text = (button.textContent || '').trim().toLowerCase();
+      var isSave = text.indexOf('сохран') !== -1 || action.indexOf('save') === 0;
+      if (isSave) saveButtons.push(button);
+      if (action === 'save-verification-endpoint' || text.indexOf('baa endpoint') !== -1 || text.indexOf('сохран') !== -1 && text.indexOf('endpoint') !== -1) {
+        button.remove();
+      }
+    });
+    if (section === 'prepare-template') {
+      var kept = false;
+      Array.prototype.forEach.call(saveButtons, function (button) {
+        var action = button.getAttribute('data-action') || '';
+        var text = (button.textContent || '').trim().toLowerCase();
+        if (action === 'save-baa-template' && text.indexOf('сохран') !== -1 && !kept) {
+          kept = true;
+          return;
+        }
+        button.remove();
+      });
+    }
+    if (section === 'prepare-verification' || section === 'verify') {
+      Array.prototype.forEach.call(saveButtons, function (button) {
+        button.remove();
+      });
+    }
+  }
+  function removeConfusingVerificationRequestBlocks() {
+    var root = document.body || app;
+    if (!root || !root.querySelectorAll) return;
+    Array.prototype.forEach.call(root.querySelectorAll('section,details,.assignment-panel,.object-row'), function (node) {
+      var text = (node.textContent || '').trim().toLowerCase();
+      if (text.indexOf('baa verification request') === -1) return;
+      node.remove();
+    });
+  }
+  function cleanupCurrentUi() {
+    removeLegacySaveButtonsForSection(currentSection || 'prepare-template');
+    removeConfusingVerificationRequestBlocks();
+  }
   function render(section) {
     setActive(section);
+    currentSection = section || 'prepare-template';
+    syncGlobalActionsForSection();
     if (section === 'schema') renderSchema();
     else if (section === 'contracts') renderContracts();
     else if (section === 'settings') renderSettings();
@@ -7355,9 +7845,12 @@ function clientScript() {
     else if (section === 'help') renderHelp();
     else if (section === 'about') renderAbout();
     else renderPrepare();
+    cleanupCurrentUi();
+    window.setTimeout(cleanupCurrentUi, 0);
     if (section !== 'contracts' && section !== 'prepare-template') loadContractVersions();
   }
   document.addEventListener('click', function (event) {
+    window.setTimeout(cleanupCurrentUi, 0);
     var navLink = event.target && event.target.closest && event.target.closest('a[data-section]');
     if (navLink) {
       event.preventDefault();
@@ -7399,8 +7892,15 @@ function clientScript() {
           'content-type': 'application/json'
         },
         body: JSON.stringify(payload)
-      }).then(function (result) { showStatus(result.json, result.response.ok); })
-        .catch(function (error) { showStatus(error && error.message ? error.message : String(error), false); });
+      }).then(function (result) { renderSchemaResult(result.json); })
+        .catch(function (error) {
+          var summaryTarget = document.getElementById('schema-summary');
+          if (summaryTarget) {
+            summaryTarget.className = 'notice error';
+            summaryTarget.textContent = error && error.message ? error.message : String(error);
+          }
+          showStatus(error && error.message ? error.message : String(error), false);
+        });
       return;
     }
     if (action === 'save-settings') {
@@ -7504,13 +8004,13 @@ function clientScript() {
       var endpointPayload = verificationBasePayload({
         endpoint: endpointForm
       });
-      showStatus('Сохраняю endpoint...', null);
+      showStatus('Сохраняю endpoint внешней проверки в CMDBuild...', null);
       api('/verification/endpoints', {
         method: 'POST',
         headers: { Accept: 'application/json', 'content-type': 'application/json' },
         body: JSON.stringify(endpointPayload)
       }).then(function (result) {
-        showStatus(result.json, result.response.ok);
+        showStatus(result.response.ok ? 'Endpoint внешней проверки сохранен в CMDBuild. Это не изменяет VSDX-шаблон.' : result.json, result.response.ok);
         if (result.response.ok) {
           loadVerificationEndpoints().then(function () {
             var select = document.getElementById('verification-endpoint-select');
@@ -7617,11 +8117,15 @@ function clientScript() {
         submitCreateObjects(false);
         return;
       }
-      savePrepareContractOnly();
+      saveBaaTemplate();
+      return;
+    }
+    if (action === 'save-baa-template') {
+      saveBaaTemplate();
       return;
     }
     if (action === 'save-template') {
-      enrichVsdx();
+      saveBaaTemplate();
       return;
     }
     if (action === 'apply-create-contract') {
@@ -7780,11 +8284,38 @@ function clientScript() {
       return;
     }
     if (action === 'apply-contract-params') {
+      syncContractParamsFromDom();
       prepareState.contractParams = normalizedUiContractParams();
       persistPrepareState();
       renderPrepareData();
       var paramsStatus = document.getElementById('contract-params-status');
       if (paramsStatus) paramsStatus.textContent = 'Применено';
+      return;
+    }
+    if (action === 'add-verification-request-variable') {
+      syncVerificationRequestVariablesFromDom();
+      prepareState.verificationRequestVariables = (prepareState.verificationRequestVariables || []).concat([{ name: '', description: '', type: 'string', mandatory: false, sourceKind: 'expression', sourceExpression: '', defaultValue: '' }]);
+      persistPrepareState();
+      renderPrepareData();
+      return;
+    }
+    if (action === 'remove-verification-request-variable') {
+      syncVerificationRequestVariablesFromDom();
+      var requestVariableIndex = Number.parseInt(button.getAttribute('data-index') || '0', 10);
+      var requestVariables = (prepareState.verificationRequestVariables || []).slice();
+      requestVariables.splice(requestVariableIndex, 1);
+      prepareState.verificationRequestVariables = requestVariables;
+      persistPrepareState();
+      renderPrepareData();
+      return;
+    }
+    if (action === 'apply-verification-request-variables') {
+      syncVerificationRequestVariablesFromDom();
+      prepareState.verificationRequestVariables = normalizedUiVerificationRequestVariables();
+      persistPrepareState();
+      renderPrepareData();
+      var requestVariableStatus = document.getElementById('verification-request-variables-status');
+      if (requestVariableStatus) requestVariableStatus.textContent = 'Применено';
       return;
     }
     if (action === 'apply-template-mapping') {
@@ -7870,7 +8401,15 @@ function clientScript() {
     currentSection = section || 'prepare-template';
     render(currentSection);
   });
+  if (window.MutationObserver) {
+    var saveButtonObserver = new MutationObserver(function () {
+      cleanupCurrentUi();
+    });
+    saveButtonObserver.observe(document.body, { childList: true, subtree: true });
+  }
+  window.setInterval(cleanupCurrentUi, 1000);
   document.addEventListener('change', function (event) {
+    window.setTimeout(cleanupCurrentUi, 0);
     if (event.target && (event.target.id === 'vsdx-file' || event.target.id === 'checksum-file' || event.target.id === 'shared-vsdx-file')) {
       acceptProvidedFiles(event.target.files);
       event.target.value = '';
@@ -7939,6 +8478,11 @@ function clientScript() {
         selectVerificationContractByCodeVersion('verification-input-contract', endpointOption.getAttribute('data-input-code') || '', endpointOption.getAttribute('data-input-version') || '');
         selectVerificationContractByCodeVersion('verification-output-contract', endpointOption.getAttribute('data-output-code') || '', endpointOption.getAttribute('data-output-version') || '');
       }
+      return;
+    }
+    if (event.target && (event.target.id === 'template-verification-enabled' || event.target.id === 'template-verification-input-contract')) {
+      syncVerificationBindingFromDom();
+      persistPrepareState();
       return;
     }
     if (event.target && (event.target.id === 'settings-checksum-extension' || event.target.id === 'settings-verify-checksum' || event.target.id === 'settings-check-cmdb-validators' || event.target.id === 'settings-reference-limit' || event.target.id === 'settings-verification-input-class' || event.target.id === 'settings-verification-output-class' || event.target.id === 'settings-verification-endpoint-class')) {
@@ -8533,6 +9077,8 @@ async function handleApi(req, res, requestUrl) {
       ? body.relationEndpointMappings
       : {};
     const contractParams = normalizeContractParams(Array.isArray(body.contractParams) ? body.contractParams : []);
+    const verificationRequestVariables = normalizeVerificationRequestVariables(Array.isArray(body.verificationRequestVariables) ? body.verificationRequestVariables : []);
+    const verificationBinding = normalizeVerificationBinding(body.verificationBinding || {});
     const settings = body.settings && typeof body.settings === 'object' && !Array.isArray(body.settings)
       ? body.settings
       : {};
@@ -8591,6 +9137,8 @@ async function handleApi(req, res, requestUrl) {
         attributeSourceRules,
         relationEndpointMappings,
         contractParams,
+        verificationRequestVariables,
+        verificationBinding,
         attributeCatalog,
         typeRules: result.typeRules,
         preparedBy
@@ -8611,6 +9159,8 @@ async function handleApi(req, res, requestUrl) {
         addedAggregates: versionResolution.addedAggregates,
         addedMappings: versionResolution.addedMappings,
         contractParams: versionResolution.contractParams,
+        verificationRequestVariables: versionResolution.verificationRequestVariables,
+        verificationBinding: versionResolution.verificationBinding,
         warnings: listResolution.warnings,
         summary: {
           versionAction: versionResolution.action,
@@ -8621,6 +9171,8 @@ async function handleApi(req, res, requestUrl) {
           addedMappings: versionResolution.addedMappings.length,
           knownMappings: versionResolution.knownMappings.length,
           contractParams: versionResolution.contractParams.length,
+          verificationRequestVariables: (versionResolution.verificationRequestVariables || []).length,
+          verificationBinding: versionResolution.verificationBinding && versionResolution.verificationBinding.enabled ? 1 : 0,
           listWarnings: listResolution.warnings.length
         }
       });
@@ -8714,6 +9266,7 @@ async function handleApi(req, res, requestUrl) {
         addedMappings: versionResolution.addedMappings.length,
         knownMappings: versionResolution.knownMappings.length,
         contractParams: versionResolution.contractParams.length,
+        verificationRequestVariables: (versionResolution.verificationRequestVariables || []).length,
         listWarnings: listResolution.warnings.length
       },
       contractVersion: fixedContractVersion,
@@ -8722,6 +9275,8 @@ async function handleApi(req, res, requestUrl) {
       addedAggregates: versionResolution.addedAggregates,
       addedMappings: versionResolution.addedMappings,
       contractParams: versionResolution.contractParams,
+      verificationRequestVariables: versionResolution.verificationRequestVariables,
+      verificationBinding: versionResolution.verificationBinding,
       warnings: listResolution.warnings,
       fixedMetadata: {
         templatePrepared: true,
