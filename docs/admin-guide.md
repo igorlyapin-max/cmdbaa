@@ -117,7 +117,7 @@ contracts и endpoint definitions для внешней верификации. 
 находится в `docs/cmdbcustompage-verification-exchange.md`.
 BAA публикует contracts в CMDBuild, после чего администратор `cmdbcustompages`
 реализует endpoint проверки. В меню `Подготовить правила верификации`
-указываются endpoint URL, версии contracts, `ParamsJson` и правило
+указываются абсолютный endpoint URL, версии contracts, `ParamsJson` и правило
 `ResultInterpretationJson`; там же сохраняется endpoint definition. В меню
 `Верификация` пользователь выбирает сохраненный `Active` endpoint и запускает
 проверку. Перед вызовом endpoint BAA сверяет текущий план с выбранным input

@@ -467,9 +467,11 @@ function validateContractVersionStatus(value) {
 }
 
 function baseClassPayload(definition) {
+  const name = validateCmdbuildIdentifier(definition.name, 'class name');
+  const description = String(definition.description || name).trim() || name;
   const payload = {
-    name: definition.name,
-    description: definition.description,
+    name,
+    description,
     prototype: Boolean(definition.prototype),
     type: 'standard',
     active: true,
@@ -496,9 +498,11 @@ function baseClassPayload(definition) {
 }
 
 function baseAttributePayload(attribute, index) {
+  const name = validateCmdbuildIdentifier(attribute.name, 'attribute name');
+  const description = String(attribute.description || name).trim() || name;
   const payload = {
-    name: attribute.name,
-    description: attribute.description,
+    name,
+    description,
     type: attribute.type,
     mode: 'write',
     active: true,
@@ -1241,24 +1245,33 @@ async function createVerificationEndpoint(authToken, className, input = {}) {
   } catch {
     throw new Error('ResultInterpretationJson must be valid JSON.');
   }
-  const response = await cmdbuildRequest(`/cmdbuild/services/rest/v3/classes/${encodeURIComponent(className)}/cards`, authToken, {
-    method: 'POST',
-    body: {
-      Code: code,
-      Description: description,
-      InputContractCode: String(input.inputContractCode || input.InputContractCode || '').trim(),
-      InputContractVersion: String(input.inputContractVersion || input.InputContractVersion || '').trim(),
-      OutputContractCode: String(input.outputContractCode || input.OutputContractCode || '').trim(),
-      OutputContractVersion: String(input.outputContractVersion || input.OutputContractVersion || '').trim(),
-      EndpointUrl: String(input.endpointUrl || input.EndpointUrl || '').trim(),
-      EndpointMethod: method,
-      ParamsJson: JSON.stringify(JSON.parse(paramsText), null, 2),
-      ResultInterpretationJson: JSON.stringify(JSON.parse(interpretationText), null, 2),
-      EndpointStatus: String(input.status || input.EndpointStatus || 'Draft').trim() || 'Draft',
-      CreatedBy: String(input.createdBy || input.CreatedBy || '').trim(),
-      CreatedAt: new Date().toISOString()
+  const body = {
+    Code: code,
+    Description: description,
+    InputContractCode: String(input.inputContractCode || input.InputContractCode || '').trim(),
+    InputContractVersion: String(input.inputContractVersion || input.InputContractVersion || '').trim(),
+    OutputContractCode: String(input.outputContractCode || input.OutputContractCode || '').trim(),
+    OutputContractVersion: String(input.outputContractVersion || input.OutputContractVersion || '').trim(),
+    EndpointUrl: String(input.endpointUrl || input.EndpointUrl || '').trim(),
+    EndpointMethod: method,
+    ParamsJson: JSON.stringify(JSON.parse(paramsText), null, 2),
+    ResultInterpretationJson: JSON.stringify(JSON.parse(interpretationText), null, 2),
+    EndpointStatus: String(input.status || input.EndpointStatus || 'Draft').trim() || 'Draft',
+    CreatedBy: String(input.createdBy || input.CreatedBy || '').trim(),
+    CreatedAt: new Date().toISOString()
+  };
+  const existingList = await listVerificationEndpoints(authToken, className);
+  const existing = existingList.success ? (existingList.data || []).find((item) => item.code === code) : null;
+  const response = await cmdbuildRequest(
+    existing && existing.id
+      ? `/cmdbuild/services/rest/v3/classes/${encodeURIComponent(className)}/cards/${encodeURIComponent(existing.id)}`
+      : `/cmdbuild/services/rest/v3/classes/${encodeURIComponent(className)}/cards`,
+    authToken,
+    {
+      method: existing && existing.id ? 'PUT' : 'POST',
+      body
     }
-  });
+  );
   return {
     success: response.ok,
     cmdbuildStatus: response.statusCode,
@@ -1381,12 +1394,103 @@ function mergeVerificationRequestVariables(previous = [], current = []) {
   };
 }
 
+function assignmentAttributesForObject(object = {}) {
+  const result = {};
+  const classes = Array.isArray(object.cmdbClasses) ? object.cmdbClasses : [];
+  for (const className of classes) result[className] = new Set();
+  for (const item of object.attributeRules || []) {
+    const rule = item && item.rule || {};
+    const className = String(rule.targetClass || '').trim();
+    const attrName = String(rule.targetAttribute || '').trim();
+    if (!className || !attrName) continue;
+    if (!result[className]) result[className] = new Set();
+    result[className].add(attrName);
+  }
+  for (const value of object.values || []) {
+    const rowName = String(value && value.name || '');
+    for (const className of classes) {
+      const attrName = templateAttributeNameForClass(rowName, className);
+      if (attrName) result[className].add(attrName);
+    }
+  }
+  return result;
+}
+
+function baaAssignmentLosses(beforeObjects = [], afterObjects = []) {
+  const afterByKey = new Map((afterObjects || []).map((object) => [object && object.pageShapeKey, object]).filter((entry) => entry[0]));
+  const losses = [];
+  for (const before of beforeObjects || []) {
+    const beforeClasses = new Set(Array.isArray(before.cmdbClasses) ? before.cmdbClasses : []);
+    if (!beforeClasses.size) continue;
+    const after = afterByKey.get(before.pageShapeKey);
+    if (!after || !(after.cmdbClasses || []).length) {
+      losses.push({
+        pageShapeKey: before.pageShapeKey,
+        mappingKey: before.mappingKey || '',
+        className: Array.from(beforeClasses).join(', '),
+        lossType: before.objectType === 'Relation' || before.relationType ? 'relation_assignment_removed' : 'class_assignment_removed',
+        message: `Удаляется CMDB-назначение ${Array.from(beforeClasses).join(', ')} на фигуре ${before.pageShapeKey}.`
+      });
+      continue;
+    }
+    const afterClasses = new Set(after.cmdbClasses || []);
+    for (const className of beforeClasses) {
+      if (!afterClasses.has(className)) {
+        losses.push({
+          pageShapeKey: before.pageShapeKey,
+          mappingKey: before.mappingKey || '',
+          className,
+          lossType: 'class_removed',
+          message: `Удаляется класс ${className} на фигуре ${before.pageShapeKey}.`
+        });
+      }
+    }
+    const beforeAttrs = assignmentAttributesForObject(before);
+    const afterAttrs = assignmentAttributesForObject(after);
+    for (const className of Object.keys(beforeAttrs)) {
+      for (const attrName of beforeAttrs[className] || []) {
+        if (!afterAttrs[className] || !afterAttrs[className].has(attrName)) {
+          losses.push({
+            pageShapeKey: before.pageShapeKey,
+            mappingKey: before.mappingKey || '',
+            className,
+            attribute: attrName,
+            lossType: 'attribute_removed',
+            message: `Удаляется атрибут ${className}.${attrName} на фигуре ${before.pageShapeKey}.`
+          });
+        }
+      }
+    }
+  }
+  return losses;
+}
+
 function normalizeVerificationBinding(value = {}) {
   const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   return {
     enabled: Boolean(raw.enabled),
     inputContractCode: String(raw.inputContractCode || raw.InputContractCode || '').trim(),
-    inputContractVersion: String(raw.inputContractVersion || raw.InputContractVersion || '').trim()
+    inputContractVersion: String(raw.inputContractVersion || raw.InputContractVersion || '').trim(),
+    endpointCode: String(raw.endpointCode || raw.EndpointCode || '').trim()
+  };
+}
+
+function normalizeVerificationEndpointBinding(value = {}) {
+  const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const hasEndpointFields = ['code', 'Code', 'endpointUrl', 'EndpointUrl', 'inputContractCode', 'InputContractCode', 'outputContractCode', 'OutputContractCode']
+    .some((key) => Object.prototype.hasOwnProperty.call(raw, key));
+  if (!hasEndpointFields) return {};
+  return {
+    code: String(raw.code || raw.Code || '').trim(),
+    endpointUrl: String(raw.endpointUrl || raw.EndpointUrl || '').trim(),
+    method: String(raw.method || raw.EndpointMethod || 'POST').trim().toUpperCase() || 'POST',
+    inputContractCode: String(raw.inputContractCode || raw.InputContractCode || '').trim(),
+    inputContractVersion: String(raw.inputContractVersion || raw.InputContractVersion || '').trim(),
+    outputContractCode: String(raw.outputContractCode || raw.OutputContractCode || '').trim(),
+    outputContractVersion: String(raw.outputContractVersion || raw.OutputContractVersion || '').trim(),
+    paramsJson: String(raw.paramsJson || raw.ParamsJson || '{}').trim() || '{}',
+    resultInterpretationJson: String(raw.resultInterpretationJson || raw.ResultInterpretationJson || '{}').trim() || '{}',
+    status: String(raw.status || raw.EndpointStatus || 'Active').trim() || 'Active'
   };
 }
 
@@ -3319,6 +3423,7 @@ async function runExternalVerification(authToken, input = {}) {
     interpretation,
     requestPayload: payload,
     response: response.json,
+    responseText: response.text || '',
     cmdbcustompageStatus: response.statusCode,
     items,
     summary: {
@@ -3412,6 +3517,84 @@ function mappingSnapshot(classMap = {}, attributeMap = {}, attributeCatalog = {}
       )
     };
   }).filter(Boolean).sort((a, b) => String(a.key).localeCompare(String(b.key)));
+}
+
+function templateAttributeNameForClass(rowName = '', className = '') {
+  const safeClass = String(className || '')
+    .replace(/[^A-Za-z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+/, '');
+  const prefix = `template_${safeClass}_`;
+  const text = String(rowName || '');
+  return text.startsWith(prefix) ? text.slice(prefix.length) : '';
+}
+
+function mappingSnapshotFromBaaObjects(objects = []) {
+  const byKey = new Map();
+  for (const object of objects || []) {
+    const key = String(object && object.mappingKey || '').trim();
+    const classes = Array.isArray(object && object.cmdbClasses) ? object.cmdbClasses.map((item) => String(item || '').trim()).filter(Boolean) : [];
+    if (!key || !classes.length) continue;
+    if (!byKey.has(key)) {
+      byKey.set(key, { key, classes: [], attributesByClass: {}, attributeRules: [] });
+    }
+    const target = byKey.get(key);
+    const classSet = new Set(target.classes || []);
+    for (const className of classes) {
+      classSet.add(className);
+      if (!Array.isArray(target.attributesByClass[className])) target.attributesByClass[className] = [];
+    }
+    target.classes = Array.from(classSet).sort((a, b) => String(a).localeCompare(String(b)));
+    const ruleByIdentity = new Map((target.attributeRules || []).map((rule) => [attributeRuleIdentity(rule), rule]));
+    for (const item of object.attributeRules || []) {
+      const rawRule = item && item.rule || {};
+      const rule = normalizeAttributeSourceRule(rawRule, rawRule.targetClass, rawRule.targetAttribute);
+      if (!rule.targetClass || !rule.targetAttribute || !classes.includes(rule.targetClass)) continue;
+      const attrs = target.attributesByClass[rule.targetClass] || [];
+      const existingIndex = attrs.findIndex((attr) => attr && attr.name === rule.targetAttribute);
+      const attr = {
+        name: rule.targetAttribute,
+        description: rule.targetAttribute,
+        type: '',
+        mandatory: false,
+        inherited: false,
+        listMode: 'none',
+        listSource: '',
+        listWarning: '',
+        sourceRule: rule
+      };
+      if (existingIndex === -1) attrs.push(attr);
+      else attrs[existingIndex] = { ...attrs[existingIndex], ...attr };
+      target.attributesByClass[rule.targetClass] = attrs.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      ruleByIdentity.set(attributeRuleIdentity(rule), rule);
+    }
+    for (const value of object.values || []) {
+      const rowName = String(value && value.name || '');
+      for (const className of classes) {
+        const attrName = templateAttributeNameForClass(rowName, className);
+        if (!attrName) continue;
+        const attrs = target.attributesByClass[className] || [];
+        if (!attrs.some((attr) => attr && attr.name === attrName)) {
+          const rule = normalizeAttributeSourceRule({}, className, attrName);
+          attrs.push({
+            name: attrName,
+            description: value.label || attrName,
+            type: value.type || '',
+            mandatory: false,
+            inherited: false,
+            listMode: 'none',
+            listSource: '',
+            listWarning: '',
+            sourceRule: rule
+          });
+          ruleByIdentity.set(attributeRuleIdentity(rule), rule);
+        }
+        target.attributesByClass[className] = attrs.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      }
+    }
+    target.attributeRules = sortedAttributeRules(ruleByIdentity.values());
+  }
+  return Array.from(byKey.values()).sort((a, b) => String(a.key).localeCompare(String(b.key)));
 }
 
 function mappingMapsFromKnownMappings(knownMappings = []) {
@@ -3719,11 +3902,15 @@ async function resolveContractVersionForEnrichment(authToken, input = {}) {
   const contract = input.contract || {};
   const currentTypes = typeSnapshot(input.types || []);
   const currentAggregates = aggregateSnapshot(input.aggregates || []);
-  const currentMappings = mappingSnapshot(input.aggregateClassMap || {}, input.aggregateAttributeMap || {}, input.attributeCatalog || {}, input.attributeListModes || {}, input.attributeSourceRules || {});
+  const currentMappings = mergeKnownMappings(
+    mappingSnapshotFromBaaObjects(input.existingBaaObjects || []),
+    mappingSnapshot(input.aggregateClassMap || {}, input.aggregateAttributeMap || {}, input.attributeCatalog || {}, input.attributeListModes || {}, input.attributeSourceRules || {})
+  ).knownMappings;
   const typeRules = input.typeRules || {};
   const currentContractParams = normalizeContractParams(input.contractParams || typeRules.contractParams || []);
   const currentVerificationRequestVariables = normalizeVerificationRequestVariables(input.verificationRequestVariables || typeRules.verificationRequestVariables || []);
   const currentVerificationBinding = normalizeVerificationBinding(input.verificationBinding || typeRules.verificationBinding || {});
+  const currentVerificationEndpoint = normalizeVerificationEndpointBinding(input.verificationEndpoint || typeRules.verificationEndpoint || {});
   const versionsResult = await listConversionContractVersions(authToken);
   const allVersions = versionsResult.success ? versionsResult.data : [];
   let resolvedContract = {
@@ -3755,8 +3942,9 @@ async function resolveContractVersionForEnrichment(authToken, input = {}) {
   const mergedContractParams = mergeContractParams(latestRules.contractParams || [], currentContractParams);
   const mergedVerificationRequestVariables = mergeVerificationRequestVariables(latestRules.verificationRequestVariables || [], currentVerificationRequestVariables);
   const verificationBindingChanged = JSON.stringify(normalizeVerificationBinding(latestRules.verificationBinding || {})) !== JSON.stringify(currentVerificationBinding);
+  const verificationEndpointChanged = JSON.stringify(normalizeVerificationEndpointBinding(latestRules.verificationEndpoint || {})) !== JSON.stringify(currentVerificationEndpoint);
   const namespacesChanged = JSON.stringify(latestRules.shapeDataNamespaces || {}) !== JSON.stringify(SHAPE_DATA_NAMESPACES);
-  if (latest && merged.addedTypes.length === 0 && mergedAggregates.addedAggregates.length === 0 && mergedMappings.addedMappings.length === 0 && !mergedRelationEndpointMappings.changed && !mergedContractParams.changed && !mergedVerificationRequestVariables.changed && !verificationBindingChanged && !namespacesChanged) {
+  if (latest && merged.addedTypes.length === 0 && mergedAggregates.addedAggregates.length === 0 && mergedMappings.addedMappings.length === 0 && !mergedRelationEndpointMappings.changed && !mergedContractParams.changed && !mergedVerificationRequestVariables.changed && !verificationBindingChanged && !verificationEndpointChanged && !namespacesChanged) {
     return {
       version: latest,
       action: 'reused',
@@ -3769,7 +3957,8 @@ async function resolveContractVersionForEnrichment(authToken, input = {}) {
       relationEndpointMappings: mergedRelationEndpointMappings.relationEndpointMappings,
       contractParams: mergedContractParams.contractParams,
       verificationRequestVariables: mergedVerificationRequestVariables.verificationRequestVariables,
-      verificationBinding: currentVerificationBinding
+      verificationBinding: currentVerificationBinding,
+      verificationEndpoint: currentVerificationEndpoint
     };
   }
   const versionNumber = nextVersionNumber(contractVersions);
@@ -3782,6 +3971,7 @@ async function resolveContractVersionForEnrichment(authToken, input = {}) {
     contractParams: mergedContractParams.contractParams,
     verificationRequestVariables: mergedVerificationRequestVariables.verificationRequestVariables,
     verificationBinding: currentVerificationBinding,
+    verificationEndpoint: currentVerificationEndpoint,
     relationEndpointMappings: mergedRelationEndpointMappings.relationEndpointMappings
   };
   const created = await createConversionContractVersion(authToken, {
@@ -3808,6 +3998,7 @@ async function resolveContractVersionForEnrichment(authToken, input = {}) {
     contractParams: mergedContractParams.contractParams,
     verificationRequestVariables: mergedVerificationRequestVariables.verificationRequestVariables,
     verificationBinding: currentVerificationBinding,
+    verificationEndpoint: currentVerificationEndpoint,
     relationEndpointMappings: mergedRelationEndpointMappings.relationEndpointMappings
   };
 }
@@ -4400,6 +4591,11 @@ function clientScript() {
   var boot = window.CMDBBAA_BOOT || {};
   var app = document.getElementById('app');
   var currentSection = boot.section || 'prepare-template';
+  var clientInstanceId = String(Date.now()) + '-' + String(Math.random()).slice(2);
+  window.__CMDBBAA_ACTIVE_CLIENT_ID = clientInstanceId;
+  function isActiveClientInstance() {
+    return window.__CMDBBAA_ACTIVE_CLIENT_ID === clientInstanceId;
+  }
   var labels = {
     schema: 'Схема',
     contracts: 'Контракты',
@@ -4784,8 +4980,9 @@ function clientScript() {
     }).join('');
   }
   function verificationEndpointOptionsHtml(items) {
-    if (!items || !items.length) return '<option value="">Нет сохраненных endpoint</option>';
-    return items.map(function (item) {
+    var endpoints = mergeVerificationEndpointsWithLocal(items);
+    if (!endpoints.length) return '<option value="">Нет сохраненных endpoint</option>';
+    return endpoints.map(function (item) {
       var label = item.code + ' / ' + item.status + ' / ' + item.endpointUrl;
       return '<option value="' + escapeHtml(item.code || '') + '"' +
         ' data-code="' + escapeHtml(item.code || '') + '"' +
@@ -4799,6 +4996,14 @@ function clientScript() {
         ' data-result-interpretation-json="' + escapeHtml(item.resultInterpretationJson || '{}') + '"' +
         ' data-status="' + escapeHtml(item.status || '') + '">' + escapeHtml(label) + '</option>';
     }).join('');
+  }
+  function mergeVerificationEndpointsWithLocal(items) {
+    var endpoints = (items || []).slice();
+    var local = prepareState.verificationEndpoint;
+    if (local && local.code && !endpoints.some(function (item) { return item && item.code === local.code; })) {
+      endpoints.unshift(local);
+    }
+    return endpoints;
   }
   function contractVersionOptionsHtml(versions) {
     if (!versions || !versions.length) return '<option value="">Нет версий</option>';
@@ -5003,7 +5208,18 @@ function clientScript() {
   }
   function updateVerificationEndpointSelect() {
     var endpointSelect = document.getElementById('verification-endpoint-select');
-    if (endpointSelect) endpointSelect.innerHTML = verificationEndpointOptionsHtml(contractsState.verificationEndpoints);
+    if (endpointSelect) {
+      endpointSelect.innerHTML = verificationEndpointOptionsHtml(contractsState.verificationEndpoints);
+      var preferredCode = prepareState.verificationBinding && prepareState.verificationBinding.endpointCode || prepareState.verificationEndpoint && prepareState.verificationEndpoint.code || '';
+      if (preferredCode) {
+        for (var index = 0; index < endpointSelect.options.length; index += 1) {
+          if ((endpointSelect.options[index].getAttribute('data-code') || '') === preferredCode) {
+            endpointSelect.selectedIndex = index;
+            break;
+          }
+        }
+      }
+    }
   }
   function loadVerificationContracts() {
     var inputTarget = document.getElementById('verification-input-contracts-list');
@@ -5038,10 +5254,18 @@ function clientScript() {
     }).then(function (result) {
       contractsState.verificationEndpoints = result.response.ok ? (result.json.data || []) : [];
       updateVerificationEndpointSelect();
-      if (target) target.innerHTML = result.response.ok ? verificationEndpointsTableHtml(contractsState.verificationEndpoints) : '<div class="notice error">' + escapeHtml(result.json.message || 'Не удалось загрузить endpoint definitions.') + '</div>';
+      if (target) target.innerHTML = result.response.ok ? verificationEndpointsTableHtml(mergeVerificationEndpointsWithLocal(contractsState.verificationEndpoints)) : '<div class="notice error">' + escapeHtml(result.json.message || 'Не удалось загрузить endpoint definitions.') + '</div>';
     }).catch(function (error) {
       var text = error && error.message ? error.message : String(error);
       if (target) target.innerHTML = '<div class="notice error">' + escapeHtml(text) + '</div>';
+    });
+  }
+  function reloadVerificationSetup() {
+    showStatus('Обновляю параметры проверки...', null);
+    return Promise.all([loadVerificationContracts(), loadVerificationEndpoints()]).then(function () {
+      showStatus('Параметры проверки обновлены.', true);
+    }).catch(function (error) {
+      showStatus(error && error.message ? error.message : String(error), false);
     });
   }
   function verificationEndpointsTableHtml(items) {
@@ -5114,14 +5338,34 @@ function clientScript() {
       '<label class="check-label"><input type="checkbox" id="verification-interpretation-show-not-matched">Показывать таблицы если не сработало</label>' +
       '</div></details>';
   }
+  function defaultVerificationEndpointCode() {
+    var versionCode = currentPrepareContractVersionCode() || prepareState.contractVersionCode || 'baa';
+    return String(versionCode || 'baa').replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') + '-endpoint';
+  }
+  function verificationEndpointEditorHtml() {
+    var endpoint = prepareState.verificationEndpoint || {};
+    return '<section class="section"><h3>Endpoint верификации</h3>' +
+      '<input type="hidden" id="verification-endpoint-code" value="' + escapeHtml(endpoint.code || defaultVerificationEndpointCode()) + '">' +
+      '<input type="hidden" id="verification-endpoint-status" value="' + escapeHtml(endpoint.status || 'Active') + '">' +
+      '<textarea id="verification-params-json" style="display:none">' + escapeHtml(endpoint.paramsJson || '{}') + '</textarea>' +
+      '<label>Вставьте абсолютный URL endpoint<input id="verification-endpoint-url" value="' + escapeHtml(endpoint.endpointUrl || '') + '" placeholder="https://cmdb.example.org/cmdbuild/custompage/api/verify/network-acl"></label>' +
+      '<p class="muted">Указывайте полный URL с протоколом и host, например https://cmdb.example.org/cmdbuild/custompage/api/verify/network-acl.</p>' +
+      '<div style="margin:10px 0 12px"><button type="button" data-action="save-verification-endpoint" style="display:inline-block;border:2px solid #0e7c7b;background:#0e7c7b;color:#fff;padding:10px 16px;border-radius:4px;font-weight:bold">Сохранить endpoint</button> <button type="button" data-action="add-verification-endpoint" title="Добавить еще одну верификацию">+ еще одна верификация</button> <button type="button" data-action="delete-verification-endpoint">Удалить правило верификации</button></div>' +
+      verificationInterpretationControlsHtml() +
+      '</section>';
+  }
   function renderPrepareVerification() {
     app.innerHTML = [
-      '<div class="toolbar"><button type="button" data-action="reload-verification-contracts">Обновить контракты проверки</button><button type="button" data-action="check-session">Проверить сессию</button></div>',
-      '<section class="section"><h2>Подготовить правила верификации</h2><p class="muted">Здесь формируются и публикуются input/output contracts для внешней проверки. Привязка шаблона к проверке задается только в меню "Подготовить шаблон" в блоке "Внешняя проверка шаблона": включите галку, выберите контракт проверки и нажмите "Сохранить шаблон".</p></section>',
-      verificationContractsWorkspaceHtml(),
+      verificationEndpointEditorHtml(),
+      verificationRequestVariablesHtml(),
       '<section class="section"><h3>Статус</h3><div id="status" class="notice">Контракты проверки еще не формировались.</div></section>'
     ].join('');
     loadVerificationContracts();
+    window.setTimeout(function () {
+      if (prepareState.verificationEndpoint && prepareState.verificationEndpoint.resultInterpretationJson) {
+        setResultInterpretationControls(prepareState.verificationEndpoint.resultInterpretationJson);
+      }
+    }, 0);
   }
   function renderVerify() {
     app.innerHTML = [
@@ -5710,6 +5954,7 @@ function clientScript() {
       inputContractCode: '',
       inputContractVersion: ''
     },
+    verificationEndpoint: null,
     contractRulesAppliedVersionCode: '',
     selectedRelationKey: '',
     attributeColumns: {
@@ -5772,6 +6017,7 @@ function clientScript() {
         contractParams: prepareState.contractParams,
         verificationRequestVariables: prepareState.verificationRequestVariables,
         verificationBinding: prepareState.verificationBinding,
+        verificationEndpoint: prepareState.verificationEndpoint,
         contractRulesAppliedVersionCode: prepareState.contractRulesAppliedVersionCode,
         selectedRelationKey: prepareState.selectedRelationKey,
         attributeColumns: prepareState.attributeColumns,
@@ -5832,6 +6078,7 @@ function clientScript() {
       prepareState.contractParams = Array.isArray(stored.contractParams) ? stored.contractParams : [];
       prepareState.verificationRequestVariables = Array.isArray(stored.verificationRequestVariables) ? stored.verificationRequestVariables : [];
       prepareState.verificationBinding = Object.assign({}, prepareState.verificationBinding, stored.verificationBinding || {});
+      prepareState.verificationEndpoint = stored.verificationEndpoint && typeof stored.verificationEndpoint === 'object' && !Array.isArray(stored.verificationEndpoint) ? stored.verificationEndpoint : null;
       prepareState.contractRulesAppliedVersionCode = stored.contractRulesAppliedVersionCode || '';
       prepareState.selectedRelationKey = stored.selectedRelationKey || '';
       prepareState.attributeColumns = Object.assign({}, prepareState.attributeColumns, stored.attributeColumns || {});
@@ -5984,8 +6231,12 @@ function clientScript() {
       prepareState.verificationBinding = Object.assign({}, prepareState.verificationBinding, {
         enabled: Boolean(rules.verificationBinding.enabled),
         inputContractCode: String(rules.verificationBinding.inputContractCode || ''),
-        inputContractVersion: String(rules.verificationBinding.inputContractVersion || '')
+        inputContractVersion: String(rules.verificationBinding.inputContractVersion || ''),
+        endpointCode: String(rules.verificationBinding.endpointCode || '')
       });
+    }
+    if (rules.verificationEndpoint && typeof rules.verificationEndpoint === 'object' && !Array.isArray(rules.verificationEndpoint)) {
+      prepareState.verificationEndpoint = Object.assign({}, rules.verificationEndpoint);
     }
     prepareState.contractRulesAppliedVersionCode = versionCode;
     persistPrepareState();
@@ -6850,6 +7101,38 @@ function clientScript() {
     link.remove();
     window.setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   }
+  function normalizeVsdxFilename(value) {
+    var filename = String(value || '').split(/[\\\\/]/).pop().trim();
+    if (!filename) return '';
+    return /\\.vsdx$/i.test(filename) ? filename : filename + '.vsdx';
+  }
+  function askOutputTemplateFilename() {
+    var current = normalizeVsdxFilename(prepareState.fileName || 'template.vsdx') || 'template.vsdx';
+    var value = window.prompt('Имя сохраняемого шаблона VSDX', current);
+    if (value === null) return null;
+    return normalizeVsdxFilename(value) || current;
+  }
+  function acceptSavedTemplateResult(result) {
+    if (!result || !result.json || !result.json.fileBase64) return;
+    var filename = normalizeVsdxFilename(result.json.filename || prepareState.fileName || 'template.vsdx') || 'template.vsdx';
+    prepareState.file = null;
+    prepareState.fileName = filename;
+    prepareState.fileBase64 = result.json.fileBase64 || '';
+    if (result.json.checksum) {
+      prepareState.checksumFile = null;
+      prepareState.checksumFileName = result.json.checksum.filename || '';
+      prepareState.checksumText = result.json.checksum.text || '';
+      prepareState.checksum = {
+        checked: true,
+        ok: true,
+        status: 'generated',
+        message: 'Контрольная сумма сформирована для сохраненного шаблона.'
+      };
+    }
+    syncFileStatus();
+    renderChecksumStatus(prepareState.checksum);
+    syncCreateFileFromPrepare();
+  }
   function expectedChecksumName() {
     var file = selectedFile();
     var ext = readSettings().checksumExtension;
@@ -6938,11 +7221,41 @@ function clientScript() {
     var inputSelect = document.getElementById('template-verification-input-contract');
     if (!enabled && !inputSelect) return;
     var option = inputSelect && inputSelect.options[inputSelect.selectedIndex];
+    var endpoint = prepareState.verificationEndpoint || {};
     prepareState.verificationBinding = {
       enabled: Boolean(enabled && enabled.checked),
       inputContractCode: option && option.getAttribute('data-code') || '',
-      inputContractVersion: option && option.getAttribute('data-version') || ''
+      inputContractVersion: option && option.getAttribute('data-version') || '',
+      endpointCode: endpoint.code || ''
     };
+  }
+  function syncVerificationEndpointFromDom() {
+    var endpointUrlInput = document.getElementById('verification-endpoint-url');
+    if (!endpointUrlInput) return;
+    var endpointUrl = String(endpointUrlInput.value || '').trim();
+    var codeInput = document.getElementById('verification-endpoint-code');
+    var statusInput = document.getElementById('verification-endpoint-status');
+    var paramsInput = document.getElementById('verification-params-json');
+    var publication = currentVerificationPublication();
+    var current = prepareState.verificationEndpoint || {};
+    prepareState.verificationEndpoint = Object.assign({}, current, {
+      code: String(codeInput && codeInput.value || current.code || defaultVerificationEndpointCode()).trim(),
+      endpointUrl: endpointUrl,
+      method: 'POST',
+      inputContractCode: publication.input && publication.input.code || current.inputContractCode || '',
+      inputContractVersion: publication.input && publication.input.version || current.inputContractVersion || '',
+      outputContractCode: publication.output && publication.output.code || current.outputContractCode || '',
+      outputContractVersion: publication.output && publication.output.version || current.outputContractVersion || '',
+      paramsJson: paramsInput && paramsInput.value || current.paramsJson || '{}',
+      resultInterpretationJson: resultInterpretationJsonFromControls(),
+      status: statusInput && statusInput.value || current.status || 'Active'
+    });
+    prepareState.verificationBinding = Object.assign({}, prepareState.verificationBinding || {}, {
+      enabled: Boolean(endpointUrl),
+      inputContractCode: prepareState.verificationEndpoint.inputContractCode || '',
+      inputContractVersion: prepareState.verificationEndpoint.inputContractVersion || '',
+      endpointCode: prepareState.verificationEndpoint.code || ''
+    });
   }
   function isVsdxFile(file) {
     var name = file && file.name ? String(file.name).toLowerCase() : '';
@@ -7118,15 +7431,23 @@ function clientScript() {
     });
   }
   function renderNotice(message, ok) {
-    var target = document.getElementById('prepare-view') || document.getElementById('contract-work-status');
+    var target = document.getElementById('prepare-view') || document.getElementById('contract-work-status') || document.getElementById('status');
     if (!target) return;
     target.className = ok === false ? 'notice error' : ok === true ? 'notice ok' : 'notice';
+    if (message && typeof message === 'object' && Array.isArray(message.assignmentLosses)) {
+      var rows = message.assignmentLosses.map(function (item) {
+        return '<tr><td>' + escapeHtml(item.pageShapeKey || '') + '</td><td>' + escapeHtml(item.className || '') + '</td><td>' + escapeHtml(item.attribute || '') + '</td><td>' + escapeHtml(item.lossType || '') + '</td><td>' + escapeHtml(item.message || '') + '</td></tr>';
+      }).join('');
+      target.innerHTML = '<strong>' + escapeHtml(message.message || 'Сохранение остановлено.') + '</strong><div class="table-wrap"><table class="type-table"><thead><tr><th>Фигура</th><th>Класс</th><th>Атрибут</th><th>Потеря</th><th>Описание</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      return;
+    }
     target.textContent = typeof message === 'string' ? message : JSON.stringify(message, null, 2);
   }
   function enrichmentPayload(base64, file, contractOnly) {
     syncContractParamsFromDom();
     syncVerificationRequestVariablesFromDom();
     syncVerificationBindingFromDom();
+    syncVerificationEndpointFromDom();
     return {
       filename: prepareState.fileName || file && file.name || 'template.vsdx',
       fileBase64: base64,
@@ -7141,6 +7462,7 @@ function clientScript() {
       contractParams: normalizedUiContractParams(),
       verificationRequestVariables: normalizedUiVerificationRequestVariables(),
       verificationBinding: prepareState.verificationBinding || {},
+      verificationEndpoint: prepareState.verificationEndpoint || {},
       cmdbClassAttributes: prepareState.cmdbClassAttributes || {},
       settings: readSettings(),
       checksumFilename: prepareState.checksumFileName || '',
@@ -7182,6 +7504,7 @@ function clientScript() {
       prepareState.contractVersionCode = result.json.contractVersion && result.json.contractVersion.code || prepareState.contractVersionCode;
       if (Array.isArray(result.json.verificationRequestVariables)) prepareState.verificationRequestVariables = result.json.verificationRequestVariables;
       if (result.json.verificationBinding) prepareState.verificationBinding = result.json.verificationBinding;
+      if (result.json.verificationEndpoint) prepareState.verificationEndpoint = result.json.verificationEndpoint;
       loadContractVersions();
       loadVerificationContracts();
       persistPrepareState();
@@ -7212,13 +7535,15 @@ function clientScript() {
       prepareState.fileBase64 = base64;
       return base64;
     })).then(function (base64) {
+      var payload = enrichmentPayload(base64, file, false);
+      payload.checksumFilename = '';
       return api('/vsdx/enrich', {
         method: 'POST',
         headers: {
           Accept: 'application/json',
           'content-type': 'application/json'
         },
-        body: JSON.stringify(enrichmentPayload(base64, file, false))
+        body: JSON.stringify(payload)
       });
     }).then(function (result) {
       if (!result.response.ok) {
@@ -7240,10 +7565,12 @@ function clientScript() {
       if (result.json.checksum && result.json.checksum.text) {
         downloadTextFile(result.json.checksum.filename || ((result.json.filename || 'enriched.vsdx') + '.sha256'), result.json.checksum.text);
       }
+      acceptSavedTemplateResult(result);
       prepareState.contractVersionId = result.json.contractVersion && result.json.contractVersion.id || prepareState.contractVersionId;
       prepareState.contractVersionCode = result.json.contractVersion && result.json.contractVersion.code || prepareState.contractVersionCode;
       if (Array.isArray(result.json.verificationRequestVariables)) prepareState.verificationRequestVariables = result.json.verificationRequestVariables;
       if (result.json.verificationBinding) prepareState.verificationBinding = result.json.verificationBinding;
+      if (result.json.verificationEndpoint) prepareState.verificationEndpoint = result.json.verificationEndpoint;
       if (result.json.fixedMetadata) {
         prepareState.contractMetadata = Object.assign({}, prepareState.contractMetadata || {}, result.json.fixedMetadata);
       }
@@ -7259,11 +7586,20 @@ function clientScript() {
     });
   }
   function saveBaaTemplate() {
+    if (window.__CMDBBAA_SAVE_TEMPLATE_IN_FLIGHT) {
+      renderNotice('Сохранение шаблона уже выполняется...', null);
+      return window.__CMDBBAA_SAVE_TEMPLATE_IN_FLIGHT;
+    }
+    var outputFilename = askOutputTemplateFilename();
+    if (outputFilename === null) {
+      renderNotice('Сохранение шаблона отменено.', null);
+      return Promise.resolve(null);
+    }
+    prepareState.fileName = outputFilename;
+    syncFileStatus();
+    persistPrepareState();
     renderNotice('Сохраняю шаблон...', null);
-    return savePrepareContractOnly({ quiet: true }).then(function (contractResult) {
-      if (!contractResult || !contractResult.response || !contractResult.response.ok) return contractResult;
-      return enrichVsdx({ quiet: true });
-    }).then(function (templateResult) {
+    saveBaaTemplate.inFlight = enrichVsdx({ quiet: true }).then(function (templateResult) {
       if (templateResult && templateResult.response && templateResult.response.ok) {
         loadVerificationContracts();
         renderNotice('Шаблон сохранен: BAA-правила записаны в CMDBuild, VSDX и контрольная сумма загружены. Версия: ' + (templateResult.json.contractVersion && templateResult.json.contractVersion.code || prepareState.contractVersionCode || 'не определена'), true);
@@ -7272,7 +7608,13 @@ function clientScript() {
     }).catch(function (error) {
       renderNotice(error && error.message ? error.message : String(error), false);
       return null;
+    }).then(function (result) {
+      saveBaaTemplate.inFlight = null;
+      window.__CMDBBAA_SAVE_TEMPLATE_IN_FLIGHT = null;
+      return result;
     });
+    window.__CMDBBAA_SAVE_TEMPLATE_IN_FLIGHT = saveBaaTemplate.inFlight;
+    return saveBaaTemplate.inFlight;
   }
   function verifyVsdxFile(file) {
     if (!file && !prepareState.fileBase64) {
@@ -7643,18 +7985,32 @@ function clientScript() {
     return JSON.stringify(payload, null, 2);
   }
   function verificationEndpointFormPayload(statusFallback) {
-    var selected = selectedVerificationContractsOrShowError();
-    if (!selected) return null;
+    var selected = selectedVerificationContractsForDraft();
+    var code = document.getElementById('verification-endpoint-code') && document.getElementById('verification-endpoint-code').value || '';
+    var endpointUrl = document.getElementById('verification-endpoint-url') && document.getElementById('verification-endpoint-url').value || '';
+    if (!String(code || '').trim()) {
+      showStatus('Укажите код endpoint.', false);
+      return null;
+    }
+    if (!String(endpointUrl || '').trim()) {
+      showStatus('Укажите URL endpoint.', false);
+      return null;
+    }
+    if (!/^https?:\\/\\//i.test(String(endpointUrl || '').trim())) {
+      showStatus('Укажите абсолютный URL endpoint с протоколом и host, например https://cmdb.example.org/cmdbuild/custompage/api/verify/network-acl.', false);
+      return null;
+    }
     return {
-      code: document.getElementById('verification-endpoint-code') && document.getElementById('verification-endpoint-code').value || '',
-      endpointUrl: document.getElementById('verification-endpoint-url') && document.getElementById('verification-endpoint-url').value || '',
-      inputContractCode: selected.input.code,
-      inputContractVersion: selected.input.version,
-      outputContractCode: selected.output.code,
-      outputContractVersion: selected.output.version,
+      code: code,
+      endpointUrl: endpointUrl,
+      inputContractCode: selected && selected.input && selected.input.code || '',
+      inputContractVersion: selected && selected.input && selected.input.version || '',
+      outputContractCode: selected && selected.output && selected.output.code || '',
+      outputContractVersion: selected && selected.output && selected.output.version || '',
       paramsJson: document.getElementById('verification-params-json') && document.getElementById('verification-params-json').value || '{}',
       resultInterpretationJson: resultInterpretationJsonFromControls(),
-      status: document.getElementById('verification-endpoint-status') && document.getElementById('verification-endpoint-status').value || statusFallback || 'Active'
+      status: document.getElementById('verification-endpoint-status') && document.getElementById('verification-endpoint-status').value || statusFallback || 'Active',
+      contractsReady: Boolean(selected)
     };
   }
   function selectVerificationContractByCodeVersion(selectId, code, version) {
@@ -7669,10 +8025,32 @@ function clientScript() {
     }
   }
   function selectedVerificationContractsOrShowError() {
-    var inputContract = selectedVerificationContract('verification-input-contract');
-    var outputContract = selectedVerificationContract('verification-output-contract');
+    var publication = currentVerificationPublication();
+    var savedEndpoint = prepareState.verificationEndpoint || {};
+    var inputContract = selectedVerificationContract('verification-input-contract') || publication.input && {
+      code: publication.input.code || '',
+      version: publication.input.version || '',
+      status: publication.input.status || '',
+      checksum: publication.input.schemaChecksum || ''
+    } || savedEndpoint.inputContractCode && {
+      code: savedEndpoint.inputContractCode || '',
+      version: savedEndpoint.inputContractVersion || '',
+      status: 'Active',
+      checksum: ''
+    };
+    var outputContract = selectedVerificationContract('verification-output-contract') || publication.output && {
+      code: publication.output.code || '',
+      version: publication.output.version || '',
+      status: publication.output.status || '',
+      checksum: publication.output.schemaChecksum || ''
+    } || savedEndpoint.outputContractCode && {
+      code: savedEndpoint.outputContractCode || '',
+      version: savedEndpoint.outputContractVersion || '',
+      status: 'Active',
+      checksum: ''
+    };
     if (!inputContract || !outputContract) {
-      showStatus('Выберите опубликованные input и output contracts.', false);
+      showStatus('Для текущей версии контракта нет опубликованных Active input/output contracts и в шаблоне нет ранее сохраненной привязки endpoint.', false);
       return null;
     }
     if (inputContract.status !== 'Active' || outputContract.status !== 'Active') {
@@ -7680,6 +8058,33 @@ function clientScript() {
       return null;
     }
     return { input: inputContract, output: outputContract };
+  }
+  function selectedVerificationContractsForDraft() {
+    var publication = currentVerificationPublication();
+    var savedEndpoint = prepareState.verificationEndpoint || {};
+    var inputContract = selectedVerificationContract('verification-input-contract') || publication.input && {
+      code: publication.input.code || '',
+      version: publication.input.version || '',
+      status: publication.input.status || 'Active',
+      checksum: publication.input.schemaChecksum || ''
+    } || savedEndpoint.inputContractCode && {
+      code: savedEndpoint.inputContractCode || '',
+      version: savedEndpoint.inputContractVersion || '',
+      status: 'Active',
+      checksum: ''
+    } || null;
+    var outputContract = selectedVerificationContract('verification-output-contract') || publication.output && {
+      code: publication.output.code || '',
+      version: publication.output.version || '',
+      status: publication.output.status || 'Active',
+      checksum: publication.output.schemaChecksum || ''
+    } || savedEndpoint.outputContractCode && {
+      code: savedEndpoint.outputContractCode || '',
+      version: savedEndpoint.outputContractVersion || '',
+      status: 'Active',
+      checksum: ''
+    } || null;
+    return inputContract && outputContract ? { input: inputContract, output: outputContract } : null;
   }
   function selectedVerificationEndpoint() {
     var select = document.getElementById('verification-endpoint-select');
@@ -7735,6 +8140,18 @@ function clientScript() {
       return '<details class="object-row" open><summary><strong>' + escapeHtml(table.title || table.code || 'Таблица результата') + '</strong> <span class="muted">' + escapeHtml(table.code || '') + ' / строк: ' + escapeHtml(rows.length) + '</span></summary><div class="table-wrap"><table class="type-table"><thead><tr>' + (header || '<th>Данные</th>') + '</tr></thead><tbody>' + (body || '<tr><td class="muted" colspan="' + escapeHtml(Math.max(columnNames.length, 1)) + '">строк нет</td></tr>') + '</tbody></table></div></details>';
     }).join('');
   }
+  function verificationRawEndpointResponseHtml(value) {
+    if (!value || typeof value !== 'object') return '';
+    var hasJson = Object.prototype.hasOwnProperty.call(value, 'response') && value.response !== undefined && value.response !== null;
+    var rawText = String(value.responseText || '');
+    if (!hasJson && !rawText) return '';
+    var title = 'JSON ответа endpoint';
+    var status = value.cmdbcustompageStatus ? ('HTTP ' + value.cmdbcustompageStatus) : '';
+    var text = hasJson
+      ? JSON.stringify(value.response, null, 2)
+      : rawText;
+    return '<details class="object-row" open><summary><strong>' + escapeHtml(title) + '</strong> <span class="muted">' + escapeHtml(status) + '</span></summary><pre>' + escapeHtml(text) + '</pre></details>';
+  }
   function externalVerificationBlocksCreation(value) {
     if (!value) return false;
     var status = value.interpretation && value.interpretation.status || '';
@@ -7762,7 +8179,7 @@ function clientScript() {
       '<div class="grid"><div><strong>Endpoint</strong><div class="type-key">' + escapeHtml([endpoint.code, endpoint.endpointUrl].filter(Boolean).join(' / ')) + '</div></div>' +
       '<div><strong>Input contract</strong><div class="type-key">' + escapeHtml([inputContract.code, inputContract.version].filter(Boolean).join(' / ')) + '</div></div>' +
       '<div><strong>Output contract</strong><div class="type-key">' + escapeHtml([outputContract.code, outputContract.version].filter(Boolean).join(' / ')) + '</div></div></div>' +
-      interpretationLine + verificationIssueRowsHtml(value.items || []) + verificationResultTablesHtml(value);
+      interpretationLine + verificationRawEndpointResponseHtml(value) + verificationIssueRowsHtml(value.items || []) + verificationResultTablesHtml(value);
   }
   function syncGlobalActionsForSection() {
     return;
@@ -7794,7 +8211,7 @@ function clientScript() {
       var text = (button.textContent || '').trim().toLowerCase();
       var isSave = text.indexOf('сохран') !== -1 || action.indexOf('save') === 0;
       if (isSave) saveButtons.push(button);
-      if (action === 'save-verification-endpoint' || text.indexOf('baa endpoint') !== -1 || text.indexOf('сохран') !== -1 && text.indexOf('endpoint') !== -1) {
+      if (text.indexOf('baa endpoint') !== -1 || text.indexOf('сохран') !== -1 && text.indexOf('baa endpoint') !== -1) {
         button.remove();
       }
     });
@@ -7807,11 +8224,6 @@ function clientScript() {
           kept = true;
           return;
         }
-        button.remove();
-      });
-    }
-    if (section === 'prepare-verification' || section === 'verify') {
-      Array.prototype.forEach.call(saveButtons, function (button) {
         button.remove();
       });
     }
@@ -7850,14 +8262,18 @@ function clientScript() {
     if (section !== 'contracts' && section !== 'prepare-template') loadContractVersions();
   }
   document.addEventListener('click', function (event) {
+    if (!isActiveClientInstance()) return;
     window.setTimeout(cleanupCurrentUi, 0);
     var navLink = event.target && event.target.closest && event.target.closest('a[data-section]');
     if (navLink) {
       event.preventDefault();
+      syncVerificationEndpointFromDom();
+      syncVerificationRequestVariablesFromDom();
       collectCreateOverrides();
       collectCreateClassRules();
       collectCreateSelection();
       persistCreateState();
+      persistPrepareState();
       currentSection = navLink.getAttribute('data-section') || 'prepare-template';
       if (window.history && window.history.pushState) window.history.pushState({ section: currentSection }, '', navLink.href);
       render(currentSection);
@@ -7984,6 +8400,11 @@ function clientScript() {
     }
     if (action === 'reload-verification-contracts') {
       loadVerificationContracts();
+      loadVerificationEndpoints();
+      return;
+    }
+    if (action === 'reload-verification-setup') {
+      reloadVerificationSetup();
       return;
     }
     if (action === 'reload-verification-endpoints') {
@@ -7998,9 +8419,50 @@ function clientScript() {
       publishVerificationContracts();
       return;
     }
+    if (action === 'add-verification-endpoint') {
+      var endpointCodeInput = document.getElementById('verification-endpoint-code');
+      var endpointUrlInput = document.getElementById('verification-endpoint-url');
+      if (endpointCodeInput) endpointCodeInput.value = defaultVerificationEndpointCode() + '-' + Date.now();
+      if (endpointUrlInput) endpointUrlInput.value = '';
+      showStatus('Добавьте URL следующей проверки и сохраните endpoint.', null);
+      return;
+    }
+    if (action === 'delete-verification-endpoint') {
+      if (!window.confirm('Удалить правило верификации из текущего draft шаблона? Карточка endpoint в CMDBuild останется без изменений. Версия контракта изменится только при сохранении шаблона.')) return;
+      prepareState.verificationEndpoint = null;
+      prepareState.verificationBinding = Object.assign({}, prepareState.verificationBinding || {}, {
+        enabled: false,
+        inputContractCode: '',
+        inputContractVersion: '',
+        endpointCode: ''
+      });
+      var deleteEndpointCode = document.getElementById('verification-endpoint-code');
+      var deleteEndpointUrl = document.getElementById('verification-endpoint-url');
+      var deleteEndpointParams = document.getElementById('verification-params-json');
+      if (deleteEndpointCode) deleteEndpointCode.value = defaultVerificationEndpointCode();
+      if (deleteEndpointUrl) deleteEndpointUrl.value = '';
+      if (deleteEndpointParams) deleteEndpointParams.value = '{}';
+      persistPrepareState();
+      showStatus('Правило верификации удалено из текущего draft. Сохраните шаблон, чтобы записать новую версию контракта и VSDX.', true);
+      return;
+    }
     if (action === 'save-verification-endpoint') {
+      syncVerificationEndpointFromDom();
+      persistPrepareState();
       var endpointForm = verificationEndpointFormPayload('Active');
       if (!endpointForm) return;
+      if (!endpointForm.contractsReady) {
+        prepareState.verificationEndpoint = Object.assign({}, prepareState.verificationEndpoint || {}, endpointForm);
+        prepareState.verificationBinding = Object.assign({}, prepareState.verificationBinding || {}, {
+          enabled: Boolean(endpointForm.endpointUrl),
+          inputContractCode: '',
+          inputContractVersion: '',
+          endpointCode: endpointForm.code || ''
+        });
+        persistPrepareState();
+        showStatus('URL endpoint сохранен в draft. CMDB endpoint не обновлен: для текущей версии еще нет опубликованных input/output contracts.', true);
+        return;
+      }
       var endpointPayload = verificationBasePayload({
         endpoint: endpointForm
       });
@@ -8010,8 +8472,16 @@ function clientScript() {
         headers: { Accept: 'application/json', 'content-type': 'application/json' },
         body: JSON.stringify(endpointPayload)
       }).then(function (result) {
-        showStatus(result.response.ok ? 'Endpoint внешней проверки сохранен в CMDBuild. Это не изменяет VSDX-шаблон.' : result.json, result.response.ok);
+        showStatus(result.response.ok ? 'Endpoint внешней проверки сохранен в CMDBuild. Привязка применена к текущему draft; сохраните шаблон, чтобы записать новую версию контракта и VSDX.' : result.json, result.response.ok);
         if (result.response.ok) {
+          prepareState.verificationEndpoint = Object.assign({}, endpointForm, result.json && result.json.data || {});
+          prepareState.verificationBinding = Object.assign({}, prepareState.verificationBinding || {}, {
+            enabled: true,
+            inputContractCode: endpointForm.inputContractCode || '',
+            inputContractVersion: endpointForm.inputContractVersion || '',
+            endpointCode: endpointForm.code || ''
+          });
+          persistPrepareState();
           loadVerificationEndpoints().then(function () {
             var select = document.getElementById('verification-endpoint-select');
             if (!select) return;
@@ -8313,9 +8783,13 @@ function clientScript() {
       syncVerificationRequestVariablesFromDom();
       prepareState.verificationRequestVariables = normalizedUiVerificationRequestVariables();
       persistPrepareState();
-      renderPrepareData();
       var requestVariableStatus = document.getElementById('verification-request-variables-status');
       if (requestVariableStatus) requestVariableStatus.textContent = 'Применено';
+      if (currentSection === 'prepare-verification') {
+        showStatus('Переменные отправки применены к текущему draft. Сохраните шаблон, чтобы записать новую версию контракта и VSDX.', true);
+      } else {
+        renderPrepareData();
+      }
       return;
     }
     if (action === 'apply-template-mapping') {
@@ -8365,10 +8839,18 @@ function clientScript() {
     persistPrepareState();
   }, true);
   document.addEventListener('input', function (event) {
-    if (!event.target || !(event.target.getAttribute('data-create-override-key') || event.target.getAttribute('data-create-class-rule-key'))) return;
+    if (!isActiveClientInstance()) return;
+    if (!event.target) return;
+    if (event.target.id === 'verification-endpoint-url' || event.target.id === 'verification-params-json' || event.target.id === 'verification-interpretation-table-code' || event.target.id === 'verification-interpretation-message-matched' || event.target.id === 'verification-interpretation-message-not-matched') {
+      syncVerificationEndpointFromDom();
+      persistPrepareState();
+      return;
+    }
+    if (!(event.target.getAttribute('data-create-override-key') || event.target.getAttribute('data-create-class-rule-key'))) return;
     renderExpressionSuggestions(event.target);
   });
   document.addEventListener('keydown', function (event) {
+    if (!isActiveClientInstance()) return;
     if (!expressionSuggestState.element || event.target !== expressionSuggestState.input) return;
     if (event.key === 'ArrowDown') {
       event.preventDefault();
@@ -8391,12 +8873,14 @@ function clientScript() {
     }
   });
   document.addEventListener('focusin', function (event) {
+    if (!isActiveClientInstance()) return;
     if (!event.target) return;
     if (event.target.getAttribute('data-create-override-key') || event.target.getAttribute('data-create-class-rule-key')) return;
     if (event.target.closest && event.target.closest('.expr-suggest')) return;
     closeExpressionSuggestions();
   });
   window.addEventListener('popstate', function () {
+    if (!isActiveClientInstance()) return;
     var section = normalizeSection((window.location.pathname || '').slice(UI_PREFIX.length + 1));
     currentSection = section || 'prepare-template';
     render(currentSection);
@@ -8407,8 +8891,11 @@ function clientScript() {
     });
     saveButtonObserver.observe(document.body, { childList: true, subtree: true });
   }
-  window.setInterval(cleanupCurrentUi, 1000);
+  window.setInterval(function () {
+    if (isActiveClientInstance()) cleanupCurrentUi();
+  }, 1000);
   document.addEventListener('change', function (event) {
+    if (!isActiveClientInstance()) return;
     window.setTimeout(cleanupCurrentUi, 0);
     if (event.target && (event.target.id === 'vsdx-file' || event.target.id === 'checksum-file' || event.target.id === 'shared-vsdx-file')) {
       acceptProvidedFiles(event.target.files);
@@ -8477,7 +8964,14 @@ function clientScript() {
         setResultInterpretationControls(endpointOption.getAttribute('data-result-interpretation-json') || '{}');
         selectVerificationContractByCodeVersion('verification-input-contract', endpointOption.getAttribute('data-input-code') || '', endpointOption.getAttribute('data-input-version') || '');
         selectVerificationContractByCodeVersion('verification-output-contract', endpointOption.getAttribute('data-output-code') || '', endpointOption.getAttribute('data-output-version') || '');
+        syncVerificationEndpointFromDom();
+        persistPrepareState();
       }
+      return;
+    }
+    if (event.target && (event.target.id === 'verification-interpretation-mode' || event.target.id === 'verification-interpretation-scope' || event.target.id === 'verification-interpretation-severity' || event.target.id === 'verification-interpretation-show-matched' || event.target.id === 'verification-interpretation-show-not-matched')) {
+      syncVerificationEndpointFromDom();
+      persistPrepareState();
       return;
     }
     if (event.target && (event.target.id === 'template-verification-enabled' || event.target.id === 'template-verification-input-contract')) {
@@ -9079,6 +9573,7 @@ async function handleApi(req, res, requestUrl) {
     const contractParams = normalizeContractParams(Array.isArray(body.contractParams) ? body.contractParams : []);
     const verificationRequestVariables = normalizeVerificationRequestVariables(Array.isArray(body.verificationRequestVariables) ? body.verificationRequestVariables : []);
     const verificationBinding = normalizeVerificationBinding(body.verificationBinding || {});
+    const verificationEndpoint = normalizeVerificationEndpointBinding(body.verificationEndpoint || {});
     const settings = body.settings && typeof body.settings === 'object' && !Array.isArray(body.settings)
       ? body.settings
       : {};
@@ -9102,12 +9597,14 @@ async function handleApi(req, res, requestUrl) {
       const types = inspectVsdxFile(filePath, { rules: typeRules });
       const aggregates = inspectVsdxAggregates(filePath, { rules: typeRules });
       const existingMetadata = inspectVsdxContractMetadata(filePath);
+      const existingBaaObjects = extractBaaObjectsFromVsdx(filePath).objects || [];
       return {
         outputPath,
         typeRules,
         types,
         aggregates,
-        existingMetadata
+        existingMetadata,
+        existingBaaObjects
       };
     });
     let versionResolution;
@@ -9139,6 +9636,8 @@ async function handleApi(req, res, requestUrl) {
         contractParams,
         verificationRequestVariables,
         verificationBinding,
+        verificationEndpoint,
+        existingBaaObjects: result.existingBaaObjects,
         attributeCatalog,
         typeRules: result.typeRules,
         preparedBy
@@ -9161,6 +9660,7 @@ async function handleApi(req, res, requestUrl) {
         contractParams: versionResolution.contractParams,
         verificationRequestVariables: versionResolution.verificationRequestVariables,
         verificationBinding: versionResolution.verificationBinding,
+        verificationEndpoint: versionResolution.verificationEndpoint,
         warnings: listResolution.warnings,
         summary: {
           versionAction: versionResolution.action,
@@ -9173,6 +9673,7 @@ async function handleApi(req, res, requestUrl) {
           contractParams: versionResolution.contractParams.length,
           verificationRequestVariables: (versionResolution.verificationRequestVariables || []).length,
           verificationBinding: versionResolution.verificationBinding && versionResolution.verificationBinding.enabled ? 1 : 0,
+          verificationEndpoint: versionResolution.verificationEndpoint && versionResolution.verificationEndpoint.endpointUrl ? 1 : 0,
           listWarnings: listResolution.warnings.length
         }
       });
@@ -9232,6 +9733,23 @@ async function handleApi(req, res, requestUrl) {
         buffer: fs.readFileSync(outputPath)
       };
     });
+    const enrichedBaaObjects = withTempFile('cmdbaa-enriched-check-', '.vsdx', enriched.buffer, (filePath) =>
+      extractBaaObjectsFromVsdx(filePath).objects || []
+    );
+    const assignmentLosses = baaAssignmentLosses(result.existingBaaObjects || [], enrichedBaaObjects);
+    if (assignmentLosses.length) {
+      sendJson(res, 422, {
+        success: false,
+        message: 'Сохранение остановлено: текущие изменения удаляют CMDB-назначения из VSDX.',
+        assignmentLosses,
+        summary: {
+          previousAssignments: (result.existingBaaObjects || []).filter((object) => (object.cmdbClasses || []).length).length,
+          nextAssignments: enrichedBaaObjects.filter((object) => (object.cmdbClasses || []).length).length,
+          losses: assignmentLosses.length
+        }
+      });
+      return;
+    }
     const sourceFilename = String(body.filename || 'template.vsdx').split(/[\\/]/).pop() || 'template.vsdx';
     const filename = /\.vsdx$/i.test(sourceFilename) ? sourceFilename : `${sourceFilename}.vsdx`;
     const checksumExtension = String(settings.checksumExtension || 'sha256').trim().replace(/^\.+/, '') || 'sha256';
@@ -9267,6 +9785,7 @@ async function handleApi(req, res, requestUrl) {
         knownMappings: versionResolution.knownMappings.length,
         contractParams: versionResolution.contractParams.length,
         verificationRequestVariables: (versionResolution.verificationRequestVariables || []).length,
+        verificationEndpoint: versionResolution.verificationEndpoint && versionResolution.verificationEndpoint.endpointUrl ? 1 : 0,
         listWarnings: listResolution.warnings.length
       },
       contractVersion: fixedContractVersion,
@@ -9277,6 +9796,7 @@ async function handleApi(req, res, requestUrl) {
       contractParams: versionResolution.contractParams,
       verificationRequestVariables: versionResolution.verificationRequestVariables,
       verificationBinding: versionResolution.verificationBinding,
+      verificationEndpoint: versionResolution.verificationEndpoint,
       warnings: listResolution.warnings,
       fixedMetadata: {
         templatePrepared: true,

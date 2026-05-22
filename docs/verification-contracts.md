@@ -132,11 +132,12 @@ Endpoint definition хранится в выбранном классе endpoint
 - `ResultInterpretationJson`
 - `EndpointStatus`
 
-`EndpointUrl` может быть абсолютным URL или относительным путем внутри
-CMDBuild/reverse-proxy origin, например:
+`EndpointUrl` должен быть абсолютным URL с протоколом и host. Относительные
+пути не используются, чтобы endpoint однозначно вызывался через нужный
+reverse proxy/origin. Пример:
 
 ```text
-/cmdbuild/custompage/api/verify/network-acl
+https://cmdb.example.org/cmdbuild/custompage/api/verify/network-acl
 ```
 
 `ParamsJson` поддерживает подстановки:
@@ -184,10 +185,10 @@ BAA показывает сохраненные endpoint definitions в меню
 5. Администратор `cmdbcustompages` читает опубликованные contracts из CMDBuild.
 6. Администратор `cmdbcustompages` реализует endpoint проверки под input/output
    contracts.
-7. В BAA в меню `Подготовить правила верификации` указываются endpoint URL,
-   versions, параметры и `ResultInterpretationJson`. Input/output contracts
-   выбираются из опубликованных Active contracts. Endpoint definition
-   сохраняется в CMDBuild.
+7. В BAA в меню `Подготовить правила верификации` указываются абсолютный
+   endpoint URL, versions, параметры и `ResultInterpretationJson`.
+   Input/output contracts выбираются из опубликованных Active contracts.
+   Endpoint definition сохраняется в CMDBuild кнопкой `Сохранить endpoint`.
 8. В меню `Верификация` пользователь выбирает сохраненный Active endpoint.
 9. BAA вызывает endpoint POST JSON.
 10. Перед вызовом BAA сверяет текущий план с выбранным input contract.

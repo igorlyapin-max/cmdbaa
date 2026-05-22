@@ -1010,13 +1010,21 @@ function enrichShapeBlock(block, options = {}) {
   if (/\/>$/.test(openTag)) return block;
   const inner = block.slice(openEnd + 1, -'</Shape>'.length);
   const textInfo = directShapeTextInfo(inner);
+  const split = splitLeadingShapeContent(inner);
   const fields = fieldsForShape(openTag, {
     ...options,
     visibleText: textInfo.value,
     textExists: textInfo.exists,
     inner
   });
-  const split = splitLeadingShapeContent(inner);
+  const meaningfulBaaUpdate = fields.some((field) =>
+    (field.name === 'template_Class' && String(field.value || '').trim()) ||
+    (field.name === '_baa_MappingKey' && String(field.value || '').trim()) ||
+    (field.name === '_baa_ContractVersionId' && String(field.value || '').trim())
+  );
+  if (!meaningfulBaaUpdate) {
+    return `${openTag}${split.leading}${enrichShapes(split.rest, options)}</Shape>`;
+  }
   return `${openTag}${enrichLeadingProperty(split.leading, fields)}${enrichShapes(split.rest, options)}</Shape>`;
 }
 

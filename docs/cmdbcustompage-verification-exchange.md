@@ -19,8 +19,12 @@
 ## Endpoint
 
 BAA вызывает endpoint методом `POST`. `EndpointUrl` хранится в
-`BAAVerificationEndpoint` и может быть абсолютным URL или относительным путем
-same-origin внутри `/cmdbuild`.
+`BAAVerificationEndpoint` и должен быть абсолютным URL с протоколом и host,
+например:
+
+```text
+https://cmdb.example.org/cmdbuild/custompage/api/verify/network-acl
+```
 
 BAA передает текущий CMDBuild authorization token в header:
 
